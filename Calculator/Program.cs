@@ -18,9 +18,10 @@ namespace Calculator
             Application.SetCompatibleTextRenderingDefault(false);
             //string eqText = @" x * 2 +5 * 3(55x - 2x *-A + (10x -2)-B)^2+sqrt(x)";
 
-            string eqText = @" -2x * 2 +5 * 3(55x - 2x *-A + (10x -2)-B)^2+sqrt(x- 1)";
+            //string eqText = @" -2x * 2 +5 * 3(55x - 2x *-A + (10x -2)-B)^2+sqrt(x- 1)";
             //string eqText2 = @"x*2+5*3(55x-2x*-A+(10x-2)-B)^2+sqrt(x)";
-                       
+            //string eqText = "-X*max(A,B)";        
+            string eqText = "55";
             Constant[] constants = new Constant[2];
             constants[0] = new Constant("A", "55.7");
             constants[1] = new Constant("B", "X - 1");

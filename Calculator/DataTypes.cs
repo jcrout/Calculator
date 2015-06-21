@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -128,46 +129,118 @@ namespace Calculator
     }
 
     [DebuggerDisplay("{Name} ({Shorthand})")]
-    public class Operator : EquationMethodMember
+    public abstract class OperatorBase : EquationMember
     {
+        private string name;
+        public override string Name { get { return name; } }
+        private string shorthand;
+        public override string Shorthand { get { return shorthand; } }
         public int Order { get; set; }
-        public Operator(string name, string shorthand, Delegate method, int order)
-            : base(name: name, shorthand: shorthand, method: method)
+
+        protected OperatorBase(string name, string shorthand, int order)
         {
+            this.name = name;
+            this.shorthand = shorthand;
             this.Order = order;
         }
+    }
 
+    [DebuggerDisplay("{Name} ({Shorthand})")]
+    public abstract class Operator : EquationMember
+    {
         private static Operator[] defaultList;
         public static Operator[] DefaultList { get { return defaultList; } }
+
+        public static Operator Addition { get { return defaultList[0]; } }
+        public static Operator Subtraction { get { return defaultList[1]; } }
+        public static Operator Multiplication { get { return defaultList[2]; } }
+        public static Operator Division { get { return defaultList[3]; } }
+        public static Operator Modulo { get { return defaultList[4]; } }
+        public static Operator Exponent { get { return defaultList[5]; } }
+
+        public abstract int Order { get; }
+        public abstract Expression GetExpression(Expression arg1, Expression arg2);
 
         static Operator()
         {
             List<Operator> list = new List<Operator>();
-            list.Add(new Operator("Addition", "+",
-                new Func<double, double, double>((d1, d2) => d1 + d2), 0));
-            list.Add(new Operator("Subtraction", "-",
-                new Func<double, double, double>((d1, d2) => d1 - d2), 0));
-            list.Add(new Operator("Multiplication", "*",
-                new Func<double, double, double>((d1, d2) => d1 * d2), 1));
-            list.Add(new Operator("Division", "/",
-                new Func<double, double, double>((d1, d2) => d1 * d2), 1));
-            list.Add(new Operator("Exponent", "^",
-                new Func<double, double, double>((d1, d2) => Math.Pow(d1, d2)), 2));
-            list.Add(new Operator("Modulus", "%",
-                new Func<double, double, double>((d1, d2) => d1 % d2), 1));
+            list.Add(new AdditionOperator());
+            list.Add(new SubtractionOperator());
+            list.Add(new MultiplicationOperator());
+            list.Add(new DivisionOperator());
+            list.Add(new ModuloOperator());
+            list.Add(new ExponentOperator());
             defaultList = list.ToArray();
+        }
+
+        private class AdditionOperator : Operator
+        {
+            public override string Name { get { return "Addition"; } }
+            public override string Shorthand { get { return "+"; } }
+            public override int Order { get { return 0; } }
+            public override Expression GetExpression(Expression arg1, Expression arg2)
+            { return Expression.Add(arg1, arg2); }
+        }
+        private class SubtractionOperator : Operator
+        {
+            public override string Name { get { return "Subtraction"; } }
+            public override string Shorthand { get { return "-"; } }
+            public override int Order { get { return 0; } }
+            public override Expression GetExpression(Expression arg1, Expression arg2)
+            { return Expression.Subtract(arg1, arg2); }
+        }
+        private class MultiplicationOperator : Operator
+        {
+            public override string Name { get { return "Multiplication"; } }
+            public override string Shorthand { get { return "*"; } }
+            public override int Order { get { return 1; } }
+            public override Expression GetExpression(Expression arg1, Expression arg2)
+            { return Expression.Multiply(arg1, arg2); }
+        }
+        private class DivisionOperator : Operator
+        {
+            public override string Name { get { return "Division"; } }
+            public override string Shorthand { get { return "/"; } }
+            public override int Order { get { return 1; } }
+            public override Expression GetExpression(Expression arg1, Expression arg2)
+            { return Expression.Divide(arg1, arg2); }
+        }
+        private class ModuloOperator : Operator
+        {
+            public override string Name { get { return "Modulo"; } }
+            public override string Shorthand { get { return "%"; } }
+            public override int Order { get { return 1; } }
+            public override Expression GetExpression(Expression arg1, Expression arg2)
+            { return Expression.Modulo(arg1, arg2); }
+        }
+        private class ExponentOperator : Operator
+        {
+            public override string Name { get { return "Exponent"; } }
+            public override string Shorthand { get { return "^"; } }
+            public override int Order { get { return 2; } }
+            public override Expression GetExpression(Expression arg1, Expression arg2)
+            { return Expression.Power(arg1, arg2); }
         }
     }
 
     [DebuggerDisplay("{Name} ({Shorthand}): {argumentCount} arguments")]
-    public class Function : EquationMethodMember
+    public class Function : EquationMember
     {
+        private string name;
+        public override string Name { get { return name; } }
+        private string shorthand;
+        public override string Shorthand { get { return shorthand; } }
+        private Delegate method;
+        public Delegate Method { get { return method; } }
+
         private int argumentCount;
         public int ArgumentCount { get { return argumentCount; } }
 
         public Function(string name, string shorthand, Delegate method)
-            : base(name: name, shorthand: shorthand, method: method)
         {
+            this.name = name;
+            this.shorthand = shorthand;
+            this.method = method;
             this.argumentCount = method.Method.GetParameters().Length;
         }
 
@@ -255,6 +328,7 @@ namespace Calculator
 
         private static EquationMemberGroup _Default;
         public static EquationMemberGroup Default { get { return _Default; } }
+
         static EquationMemberGroup()
         {
             var operators = (IEnumerable<EquationMember>)Operator.DefaultList;
@@ -356,6 +430,7 @@ namespace Calculator
 
                 data.Text = FixConstants(data);
                 EvaluateSubExpressions(data);
+
                 Expression finalExpression = ParseSubExpression(data, data.Text);
                 LambdaExpression lambdaExpression = Expression.Lambda(finalExpression, data.Variable);
 
@@ -468,33 +543,45 @@ namespace Calculator
                         int leftIndex = subExpression.X;
                         int rightIndex = subExpression.Y;
                         int leftLength = subExpression.Left.Length;
-                        int difference = subExpression.Y - subExpression.X;
+                        int rightLength = subExpression.Right.Length;
+                        int difference = subExpression.Y - subExpression.X - leftLength;
                         string equationFragment = data.Text.Substring(subExpression.X + leftLength,
-                                                                        difference - leftLength);
-                        var expr = ParseSubExpression(data, equationFragment);
-
+                                                                        difference);
                         var Function = GetAttachedFunction(data, subExpression.X);
+
+                        Expression expr = null;
+
+
                         if (Function != null)
                         {
-                            data.UsedFunctions.Remove(Function);
+                            string[] argumentFragments = equationFragment.Split(new char[] { ',' });
                             var functionMethod = data.Functions.FirstOrDefault(f => String.Equals(Function.Value.ToUpper(), f.Shorthand.ToUpper()));
-                            var functionExpression = Expression.Call(functionMethod.Method.Method, expr);
+                            if (argumentFragments.Count() != functionMethod.ArgumentCount) throw new Exception(""); ////
+
+                            Expression[] functionArguments = new Expression[argumentFragments.Count()];
+                            for (int argIndex = 0; argIndex < argumentFragments.Count(); argIndex++)
+                                functionArguments[argIndex] = ParseSubExpression(data, argumentFragments[argIndex]);
+
+
+                            expr = Expression.Call(functionMethod.Method.Method, functionArguments);
                             //Delegate del = Expression.Lambda(functionExpression, data.Variable).Compile();
                             //object result = del.DynamicInvoke(new object[] { -85.3 });
                             { }
-                            name = data.RegisterExpression(functionExpression);
-                            leftIndex = subExpression.X - functionMethod.Shorthand.Length;
-                            difference = subExpression.Y + subExpression.Right.Length - leftIndex;
-                            data.Text = data.UpdateEquationText(leftIndex, difference, name); // subExpression.X - functionMethod.Shorthand.Length, difference + 1 + functionMethod.Shorthand.Length, name);
-                            UpdateList(list, leftIndex, difference - name.Length, i);
+                            leftIndex -= functionMethod.Shorthand.Length;
+                            difference += functionMethod.Shorthand.Length;
+                            data.UsedFunctions.Remove(Function);
+                            //data.Text = data.UpdateEquationText(leftIndex, difference, name); // subExpression.X - functionMethod.Shorthand.Length, difference + 1 + functionMethod.Shorthand.Length, name);
+                            //UpdateList(list, leftIndex, difference - name.Length, i);
                         }
                         else
                         {
-                            name = data.RegisterExpression(expr);
-                            data.Text = data.UpdateEquationText(subExpression.X, difference + 1, name);
-                            UpdateList(list, leftIndex, difference - name.Length + 1, i);
-                        }
+                            expr = ParseSubExpression(data, equationFragment);
 
+                        }
+                        name = data.RegisterExpression(expr);
+                        difference += leftLength + rightLength;
+                        data.Text = data.UpdateEquationText(leftIndex, difference, name);
+                        UpdateList(list, leftIndex, difference - name.Length, i);
 
                     }
                 }
@@ -631,32 +718,83 @@ namespace Calculator
 
             // tomrrow: replace -55.7 with -1*55.7 ? getting rid of the - sign as a negative indicator, and keeping only the subtr operator text
 
+            private string FixString(_InternalData data, string equationFragment)
+            {
+                //equationFragment = "55x - 2x *-55 + 3";
+                string doubleNegativePattern = @"-{1}\s+-{1}";
+                equationFragment = Regex.Replace(equationFragment, doubleNegativePattern, "+");
+
+                string negPattern = @"[" + Regex.Escape(@"*+\") + @"]\s*-{1}\s*";
+                //equationFragment = Regex.Replace(equationFragment, negPattern, "-1*");
+
+                var matches = Regex.Matches(equationFragment, negPattern);
+                int count = matches.Count - 1;
+                for (int i = count; i > -1; i--)
+                {
+                    Match match = matches[i];
+                    string newstr = match.Value.Substring(0, 1) + "-1*";
+                    // equationFragment = equationFragment.Insert(match.Index + 1, "-1*"); // data.UpdateEquationText(match.Index + 1, 1, "*" + data.Text[match.Index + 1]);
+                    equationFragment = equationFragment.Remove(match.Index, match.Length);
+                    equationFragment = equationFragment.Insert(match.Index, newstr);
+                }
+                return equationFragment;
+            }
+
+            private double Temp_EvaluateExpr(_InternalData data, string str)
+            {
+                Expression expr = data.SubExpressions[str];
+                object result = Expression.Lambda(expr, data.Variable).Compile().DynamicInvoke(new object[] { 5.5D });
+                Console.WriteLine(str + ": " + result.ToString());
+                return (double)result;
+            }
             private Expression ParseSubExpression(_InternalData data, string equationFragment)
             {
                 //equationFragment = "10x - -3.55^2 +33.0 - -35.0*5";
                 // equationFragment = "x -2";
+                string origexpr = equationFragment;
+                equationFragment = FixString(data, equationFragment);
+                //string doubleNegativePattern = @"-{1}\s+-{1}"; // var matcheslol = Regex.Matches(equationFragment, doubleNegativePattern);                
+                //equationFragment = Regex.Replace(equationFragment, doubleNegativePattern, "+");
 
-                string doubleNegativePattern = @"-{1}\s+-{1}"; // var matcheslol = Regex.Matches(equationFragment, doubleNegativePattern);                
-                equationFragment = Regex.Replace(equationFragment, doubleNegativePattern, "+");
+                string negPattern213 = @"^\s*-";
+                equationFragment = Regex.Replace(equationFragment, negPattern213, "0-");
 
-                string negPattern = @"^\s*-";
-                equationFragment = Regex.Replace(equationFragment, negPattern, "0-");
+                //string negPattern2 = @"-{1}\d";
+                //equationFragment = Regex.Replace(equationFragment, negPattern2, "-1*");
 
                 List<Expression> expressions = new List<Expression>();
                 string pattern = @"\d+(?:\.{1}\d+)?"; // +data.Equation.Variable.Shorthand + "?";
+                //string pattern = @"(?!" + Regex.Escape(_InternalData.ExpressionPrefix) + @")\d+(?:\.{1}\d+)?";
                 string variableText = data.Equation.Variable.Shorthand.ToUpper();
                 string variablePattern = variableText + "{1}";
+                string negPattern = @"-1\*";
                 var matches = Regex.Matches(equationFragment, pattern);
                 var matches2 = Regex.Matches(equationFragment, variablePattern, RegexOptions.IgnoreCase);
+                var matches3 = Regex.Matches(equationFragment, negPattern);
                 var matchInfoList = new List<MatchInfo>(matches.Count + matches2.Count);
-                foreach (Match m in matches) matchInfoList.Add(MatchInfo.FromMatch(m));
+                int lengthz = _InternalData.ExpressionPrefix.Length;
+                foreach (Match m in matches)
+                {
+                    // string yolo = m.Index >= lengthz ? equationFragment.Substring(m.Index - lengthz, lengthz) : "nope";
+                    if (m.Index >= lengthz && equationFragment.Substring(m.Index - lengthz, lengthz) == _InternalData.ExpressionPrefix)
+                        matchInfoList.Add(new MatchInfo() { Index = m.Index - lengthz, Length = m.Length + lengthz, Value = _InternalData.ExpressionPrefix + m.Value });
+                    else
+                        matchInfoList.Add(MatchInfo.FromMatch(m));
+                }
                 foreach (Match m in matches2) matchInfoList.Add(MatchInfo.FromMatch(m));
-                matchInfoList.Sort((m1, m2) => m1.Index > m2.Index ? 1 : m1.Index < m2.Index ? -1 : 0);
+                foreach (Match m in matches3)
+                {
+                    MatchInfo matchInfo = matchInfoList.First(minfo => minfo.Index == m.Index + 1);
+                    matchInfo.Index -= 1;
+                    matchInfo.Value = "-1";
+                    matchInfo.Length = 2;
+                }
 
-                //pattern = @"\d" + Regex.Escape(variableText);
-                //matches = Regex.Matches(equationFragment, pattern, RegexOptions.IgnoreCase);
-                // for (int i = matches.cou)
-                //equationFragment = FixShorthandVariableNotation(data, equationFragment, matchInfoList, matches2);
+                if (matchInfoList.Count == 0) throw new Exception("");
+                if (matchInfoList.Count == 1)
+                    return GetExpressionFromMatch(data, matchInfoList[0]);
+
+                matchInfoList.Sort((m1, m2) => m1.Index > m2.Index ? 1 : m1.Index < m2.Index ? -1 : 0);
 
                 foreach (var opList in data.Operators)
                 {
@@ -675,8 +813,8 @@ namespace Calculator
                             var arguments = new Expression[2];
                             arguments[0] = GetExpressionFromMatch(data, surroundingMatches.Item1);
                             arguments[1] = GetExpressionFromMatch(data, surroundingMatches.Item2);
-                            // arguments[0] = surroundingMatches.Item1.Value.ToUpper() == variableText ? data.Variable : Expression.Constant()
-                            Expression expr = Expression.Call(op.Method.Method, arguments);
+                            Expression expr = op.GetExpression(arguments[0], arguments[1]);
+
                             string val = data.RegisterExpression(expr);
                             int leftIndex = surroundingMatches.Item1.Index;
                             int rightIndex = surroundingMatches.Item2.Index + surroundingMatches.Item2.Length;
