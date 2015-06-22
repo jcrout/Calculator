@@ -13,30 +13,6 @@ using System.Windows.Forms;
 namespace Calculator
 {
 
-    // 
-    public abstract class EquationBoxBase
-    {
-        // Include a 'Constants' textbox locally for each EBox and one globally (cannot have repeat values for local)
-        // CheckBox to enable/disable an EB for graphing
-
-        protected RichTextBox rtbEquation;
-
-        public virtual string Variable { get { return "X"; } }
-
-        public virtual string Text { get { return rtbEquation.Text; } set { rtbEquation.Text = value; } }
-
-        public virtual bool HasEquation { get { return !string.IsNullOrEmpty(rtbEquation.Text); } }
-    }
-
-    // Holds one or more EquationBox instances, with a + button to allow adding more equations
-    public class EquationPanel : Panel
-    {
-
-    }
-
-
-
-
     [DebuggerDisplay("{Text}")]
     public abstract class Equation
     {
@@ -275,7 +251,6 @@ namespace Calculator
         }
     }
 
-    // case sensitivity?
     [DebuggerDisplay("{Shorthand,nq}:  {Value,nq}")]
     public class Constant : Variable
     {
@@ -295,20 +270,6 @@ namespace Calculator
                 bool result = double.TryParse(Value, out d);
                 return result;
             }
-        }
-    }
-
-    public class SubExpressionDelimiter : EquationMember
-    {
-
-        public override string Name
-        {
-            get { throw new NotImplementedException(); }
-        }
-
-        public override string Shorthand
-        {
-            get { throw new NotImplementedException(); }
         }
     }
 
@@ -423,6 +384,7 @@ namespace Calculator
             public override Delegate Parse(Equation equation, EquationMemberGroup members)
             {
                 _InternalData data = new _InternalData(equation, members);
+                Program.Log.TraceInformation("Parsing equation " + equation.Text.ToString());
                 data.UsedFunctions = GetFunctionList(data);
 
                 // must occur after obtaining used function list, because those functions might have numbers in them at the end
@@ -433,9 +395,9 @@ namespace Calculator
 
                 Expression finalExpression = ParseSubExpression(data, data.Text);
                 LambdaExpression lambdaExpression = Expression.Lambda(finalExpression, data.Variable);
-
+          
                 Delegate compiledDelegate = lambdaExpression.Compile();
-                object result = compiledDelegate.DynamicInvoke(new object[] { 5.5D });
+                //object result = compiledDelegate.DynamicInvoke(new object[] { 5.5D });
 
                 return compiledDelegate;
             }
@@ -499,7 +461,6 @@ namespace Calculator
                     int rightIndex = equation.IndexOf(right, previousIndex);
                     if (leftIndex == -1 && rightIndex == -1) break;
                     int newIndex = 0;
-                    Point p;
                     if (leftIndex < rightIndex && leftIndex != -1)
                     {
                         newIndex = leftIndex;
@@ -561,31 +522,22 @@ namespace Calculator
                             Expression[] functionArguments = new Expression[argumentFragments.Count()];
                             for (int argIndex = 0; argIndex < argumentFragments.Count(); argIndex++)
                                 functionArguments[argIndex] = ParseSubExpression(data, argumentFragments[argIndex]);
-
-
                             expr = Expression.Call(functionMethod.Method.Method, functionArguments);
-                            //Delegate del = Expression.Lambda(functionExpression, data.Variable).Compile();
-                            //object result = del.DynamicInvoke(new object[] { -85.3 });
-                            { }
+
                             leftIndex -= functionMethod.Shorthand.Length;
                             difference += functionMethod.Shorthand.Length;
                             data.UsedFunctions.Remove(Function);
-                            //data.Text = data.UpdateEquationText(leftIndex, difference, name); // subExpression.X - functionMethod.Shorthand.Length, difference + 1 + functionMethod.Shorthand.Length, name);
-                            //UpdateList(list, leftIndex, difference - name.Length, i);
                         }
                         else
                         {
                             expr = ParseSubExpression(data, equationFragment);
-
                         }
                         name = data.RegisterExpression(expr);
                         difference += leftLength + rightLength;
                         data.Text = data.UpdateEquationText(leftIndex, difference, name);
                         UpdateList(list, leftIndex, difference - name.Length, i);
-
                     }
                 }
-                { }
             }
 
             private MatchInfo GetAttachedFunction(_InternalData data, int index)
@@ -645,7 +597,7 @@ namespace Calculator
                                       select new List<Operator>(from g in oGroup select g)).ToArray();
                     this.Constants = equation.Constants.OrderByDescending(x => x.Shorthand.Length).ToArray();
                     this.Variable = Expression.Parameter(typeof(double), equation.Variable.Shorthand);
-                    this.Text = equation.Text; //.Replace(" ", ""); //          -2x*2+5*3(55x-2x*-A+(10x-2)-B)^2+sqrt(x)
+                    this.Text = equation.Text; 
                     this.SubExpressions = new Dictionary<string, Expression>();
                 }
 
@@ -716,16 +668,12 @@ namespace Calculator
             }
 
 
-            // tomrrow: replace -55.7 with -1*55.7 ? getting rid of the - sign as a negative indicator, and keeping only the subtr operator text
-
             private string FixString(_InternalData data, string equationFragment)
             {
-                //equationFragment = "55x - 2x *-55 + 3";
                 string doubleNegativePattern = @"-{1}\s+-{1}";
                 equationFragment = Regex.Replace(equationFragment, doubleNegativePattern, "+");
 
                 string negPattern = @"[" + Regex.Escape(@"*+\") + @"]\s*-{1}\s*";
-                //equationFragment = Regex.Replace(equationFragment, negPattern, "-1*");
 
                 var matches = Regex.Matches(equationFragment, negPattern);
                 int count = matches.Count - 1;
@@ -733,7 +681,6 @@ namespace Calculator
                 {
                     Match match = matches[i];
                     string newstr = match.Value.Substring(0, 1) + "-1*";
-                    // equationFragment = equationFragment.Insert(match.Index + 1, "-1*"); // data.UpdateEquationText(match.Index + 1, 1, "*" + data.Text[match.Index + 1]);
                     equationFragment = equationFragment.Remove(match.Index, match.Length);
                     equationFragment = equationFragment.Insert(match.Index, newstr);
                 }
@@ -747,14 +694,10 @@ namespace Calculator
                 Console.WriteLine(str + ": " + result.ToString());
                 return (double)result;
             }
+
             private Expression ParseSubExpression(_InternalData data, string equationFragment)
             {
-                //equationFragment = "10x - -3.55^2 +33.0 - -35.0*5";
-                // equationFragment = "x -2";
-                string origexpr = equationFragment;
                 equationFragment = FixString(data, equationFragment);
-                //string doubleNegativePattern = @"-{1}\s+-{1}"; // var matcheslol = Regex.Matches(equationFragment, doubleNegativePattern);                
-                //equationFragment = Regex.Replace(equationFragment, doubleNegativePattern, "+");
 
                 string negPattern213 = @"^\s*-";
                 equationFragment = Regex.Replace(equationFragment, negPattern213, "0-");
