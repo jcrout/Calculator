@@ -310,11 +310,11 @@ namespace Calculator
 
         public abstract string[,] SubExpressionDelimiters { get; }
 
-        public abstract Delegate Parse(Equation equation, EquationMemberGroup members);
+        public abstract Delegate Parse(Equation equation, object parseData = null);
 
         public static Delegate ParseEquation(Equation equation, EquationMemberGroup members)
         {
-            return _Default.Parse(equation, members);
+            return _Default.Parse(equation, members ?? EquationMemberGroup.Default);
         }
 
 
@@ -381,8 +381,9 @@ namespace Calculator
                 FixShorthand_MultiplyVariable(data);
             }
 
-            public override Delegate Parse(Equation equation, EquationMemberGroup members)
+            public override Delegate Parse(Equation equation, object parseData)
             {
+                EquationMemberGroup members = parseData is EquationMemberGroup ? (EquationMemberGroup)parseData : EquationMemberGroup.Default;
                 _InternalData data = new _InternalData(equation, members);
                 Program.Log.TraceInformation("Parsing equation " + equation.Text.ToString());
                 data.UsedFunctions = GetFunctionList(data);
