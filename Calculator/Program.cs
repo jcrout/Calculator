@@ -17,31 +17,47 @@ namespace Calculator
         [STAThread]
         static void Main()
         {
-            Log = new TraceSource("CalculatorSource", SourceLevels.Information);
-       
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            ////string eqText = @" x * 2 +5 * 3(55x - 2x *-A + (10x -2)-B)^2+sqrt(x)";      
-            //string eqText = @" -2x * 2 +5 * 3(55x - 2x *-A + (10x -2)-B)^2+sqrt(x- 1)";
-            ////string eqText2 = @"x*2+5*3(55x-2x*-A+(10x-2)-B)^2+sqrt(x)";
-            ////string eqText = "-X*max(A,B)";        
-            ////string eqText = "x^2";
-            //Constant[] constants = new Constant[2];
+            Log = new TraceSource("CalculatorSource", SourceLevels.Information); 
+            //Application.EnableVisualStyles();
+            //Application.SetCompatibleTextRenderingDefault(false);
+            //string eqText = @"log10(X) - -7max(3B(B),ABA) + l^2 - 3X(5(X))";
+            //Constant[] constants = new Constant[3];
             //constants[0] = new Constant("A", "55.7");
             //constants[1] = new Constant("B", "X - 1");
+            //constants[2] = new Constant("l", "33.21");
 
             //Function[] functions = new Function[1];
             //functions[0] = new Function("Square Root", "sqrt", new Func<double, double>(d => Math.Sqrt(d)));
 
-            //Equation equation = Equation.Create(eqText, constants, Variable.Default);
+            //equation = Equation.Create(eqText, constants, new Variable[] { Variable.XVariable }); //, Variable.YVariable, new Variable("TE") });
             //Stopwatch sw = Stopwatch.StartNew();
             //sw.Stop();
-            //sw = Stopwatch.StartNew();
-            //Delegate del = EquationParser.ParseEquation(equation, EquationMemberGroup.Default);
-            //sw.Stop();
-            //{ }
+            //delegates = new Delegate[10000];
+            //JonUtility.Diagnostics.BenchmarkMethod(methodo, 100, false, s => Console.WriteLine(s));
+            //JonUtility.Diagnostics.BenchmarkMethod(methodo, 100, false, s => Console.WriteLine(s));
+            //someFunc = (Func<double, double>)delegates[0];
+            //JonUtility.Diagnostics.BenchmarkMethod(methodo2, 100, false, s => Console.WriteLine(s));
+         
             Application.Run(new CalculatorForm());
         }
 
+        private static Equation equation;
+        private static Delegate[] delegates;
+        private static Func<double, double> someFunc;
+        private static int delCounter = 0;
+        private static double someResultz = 0;
+        private static void methodo()
+        {
+            Delegate del = EquationParser.ParseEquation(equation, EquationMemberGroup.Default);
+            delegates[delCounter] = del;
+            delCounter++;
+            //object result = del.DynamicInvoke(new object[] { 5.7D });
+            //Console.WriteLine(result.ToString());
+        }
+
+        private static void methodo2()
+        {
+            someResultz = someFunc(5.5D);
+        }
     }
 }

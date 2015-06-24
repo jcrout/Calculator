@@ -38,10 +38,11 @@ namespace Calculator
     using System.Drawing;
     using System.Linq;
     using System.Text;
+    using System.Threading;
     using System.Threading.Tasks;
     using System.Windows.Forms;
     using JonUtility;
-    using U = JonUtility.Utility;
+    using U = JonUtility.Utility;  
 
     public enum GraphMode : int
     {
@@ -167,19 +168,68 @@ namespace Calculator
             this.Parent = parent;
             this.SetBounds(left, top, width, height);
             this.graphBox = U.NewControl<GraphBox>(this, string.Empty, 25, 25, 301, 301);
-            Task t = Task.Run(() =>
+            var btn = U.NewControl<Button>(this, "lol", 0, 0, 80, 22);
+            btn.Click += (sender, e) =>
             {
-                string eqText = "x^2+1 - (.5x^3)";
-                Equation eq = Equation.Create(eqText);
-                Delegate del = EquationParser.ParseEquation(eq, null);
-                object result = del.DynamicInvoke(new object[] { 5.5D });
-                this.graphBox.Graph(del, null);
-            });
+                double randDouble = JonUtility.Diagnostics.GetRandomDouble(4);
+                Constant[] constants = new Constant[3];
+                constants[0] = new Constant("A", "55.7");
+                constants[1] = new Constant("B", "X - 1");
+                constants[2] = new Constant("C", "33.21");
+                Equation[] equations = new Equation[5];
+                equations[0] = Equation.Create(randDouble.ToString() + @"x^2 - .25x^3 + max(x, 3) - -2", constants);
+                equations[1] = Equation.Create(@"3log10(" + randDouble.ToString() + "X)", constants);
+                equations[2] = Equation.Create(randDouble.ToString() + @"x^4 - x^3 + x^2 - x + 1", constants);
+                equations[3] = Equation.Create(randDouble.ToString() + @"AB + l(X/C)", constants);
+                equations[4] = Equation.Create(randDouble.ToString() + @"X", constants);
+                Delegate[] delegates = equations.Select(eq => EquationParser.ParseEquation(eq, null)).ToArray();
+                this.graphBox.Graph(delegates);
+            };
+            var btn2 = U.NewControl<Button>(this, "Clear", btn.Right + 10, 0, 80, 22);
+            btn2.Click += (sender, e) =>
+            {
+                this.graphBox.Clear(true);
+            };
         }
     }
 
-    // tomorrow: fix the tick marks to represent the correct offsets instead of doing it by count
-    //           allow decimal numbers without the leading 0, such as ".5" instead of "0.5"
+    public class GraphData
+    {
+        private Delegate function;
+        private PointD[] points;
+
+        internal GraphData(Delegate function, PointD[] points)
+        {
+            this.function = function;
+            this.points = points;
+        }
+
+        private GraphData()
+        {
+        }
+
+        public Delegate Function
+        {
+            get
+            {
+                return this.function;
+            }
+        }
+
+        public PointD[] Points
+        {
+            get
+            {
+                return this.points;
+            }
+        }
+    }
+
+    public enum GraphStatus
+    {
+        Idle = 0,
+        Drawing = 1
+    }
 
     public class GraphBox : PictureBox
     {
@@ -191,7 +241,9 @@ namespace Calculator
         private Pen graphLinePen;
         private Point origin;
         private PointD scaleFactor;
-
+        private GraphStatus graphStatus = GraphStatus.Idle;
+        private object statusUpdateLock = new object();
+              
         public GraphBox()
         {
             this.SizeMode = PictureBoxSizeMode.Normal;
@@ -208,37 +260,111 @@ namespace Calculator
             this.SetBounds(left, top, width, height);
         }
 
+        public GraphStatus CurrentStatus
+        {
+            get
+            {
+                lock (this.statusUpdateLock)
+                {
+                    return this.graphStatus;
+                }
+            }
+
+            protected set
+            {
+                lock (this.statusUpdateLock)
+                {
+                    this.graphStatus = value;
+                }
+            }
+        }
+
         public GraphSettings Settings
         {
             get
             {
                 return this.settings;
             }
+        }         
+
+        public void Clear(bool redrawGrid = false)
+        {
+            this.Clear(true, redrawGrid);
+        }
+        
+        public void Graph(IEnumerable<Delegate> functions)
+        {
+            // Disallow multiple calls to Graph
+            lock (this.statusUpdateLock)
+            {
+                if (this.graphStatus != GraphStatus.Idle)
+                {
+                    return;
+                }
+                this.graphStatus = GraphStatus.Drawing;
+            }
+
+            this.OnGraph(functions);
         }
 
-        public void Graph(Delegate function, object graphData = null)
+        public void Graph(Delegate function)
         {
-            this.OnGraph(function, graphData);
+            this.Graph(new Delegate[1] { function });
         }
 
-        protected async virtual void OnGraph(Delegate function, object graphData = null)
+        protected async virtual void OnGraph(IEnumerable<Delegate> functions)
         {
+            long time1 = 0, time2 = 0;
+            JonUtility.Diagnostics.QueryPerformanceCounter(ref time1);
+
             this.SetOrigin();
-            Task t = Task.Run(() => this.DrawBaseGraph());
-            PointD[] points = await Task.Run(() => this.GetGraphPoints(function, graphData)).ConfigureAwait(false);
-            await t.ConfigureAwait(false);
-            await Task.Run(() => this.DrawGraphPoints(points)).ConfigureAwait(false);
+            this.Clear(false, false);
+
+            var drawBaseGraphTask = Task.Run(() => this.DrawBaseGraph());
+            var tasks = new List<Task>(functions.Count() + 1) { drawBaseGraphTask };
+
+            foreach (Delegate function in functions)
+            {
+                Delegate func = function;
+                var t2 = Task.Run(() => this.GetGraphData(func))
+                    .ContinueWith(f => this.DrawGraphPoints(f.Result.Points));
+                tasks.Add(t2);
+            }
+
+            try
+            {
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch (AggregateException ex)
+            {
+                Program.Log.TraceError(ex);
+            }
+
             this.Invoke(new Action(() => { this.Image = this.image; }));
+            this.graphStatus = GraphStatus.Idle;
+
+            JonUtility.Diagnostics.QueryPerformanceCounter(ref time2);
+            this.Parent.Parent.Invoke(new Action(() => this.Parent.Parent.Text = "Time taken: " + U.TicksToMS(time2 - time1, 4)));
         }
 
         protected override void OnResize(EventArgs e)
         {
             if ((this.ClientSize.Width > 0) && (this.ClientSize.Height > 0))
             {
-                this.image = new Bitmap(this.ClientSize.Width, this.ClientSize.Height);
-                this.graphics = Graphics.FromImage(this.image);
+                if (this.graphics == null)
+                {
+                    this.image = new Bitmap(this.ClientSize.Width, this.ClientSize.Height);
+                    this.graphics = Graphics.FromImage(this.image);
+                }
+                else
+                {
+                    lock (this.graphics)
+                    {
+                        this.image = new Bitmap(this.ClientSize.Width, this.ClientSize.Height);
+                        this.graphics = Graphics.FromImage(this.image);
+                    }
+                }
             }
-
             base.OnResize(e);
         }
 
@@ -257,6 +383,24 @@ namespace Calculator
             }
 
             base.Dispose(disposing);
+        }
+
+        private async void Clear(bool refresh, bool redrawGrid)
+        {
+            lock (this.graphics)
+            {
+                this.graphics.Clear(this.BackColor);
+            }
+
+            if (redrawGrid)
+            {
+                await Task.Run(() => this.DrawBaseGraph());
+            }
+
+            if (refresh)
+            {
+                this.Refresh();
+            }
         }
 
         private void SetOrigin()
@@ -287,7 +431,7 @@ namespace Calculator
                 }
                 else
                 {
-                    double offset = Math.Abs(this.settings.YAxisRange.X / rangeTotalY);
+                    double offset = Math.Abs(this.settings.YAxisRange.Y / rangeTotalY);
                     originY = (int)(offset * this.ClientSize.Height);
                 }
             }
@@ -302,14 +446,12 @@ namespace Calculator
             int upperLineX = this.origin.X - halfLineThickness;
             int upperLineY = this.origin.Y - halfLineThickness;
 
-            this.graphics.Clear(this.BackColor);
-
             if (this.settings.ShowXAxis)
                 for (int i = 0; i < this.settings.LineThickness; i++)
-                    this.graphics.DrawLine(this.axisPen, 0, upperLineY + i, this.ClientSize.Width, upperLineY + i);
+                    this.DrawLine(this.axisPen, 0, upperLineY + i, this.ClientSize.Width, upperLineY + i);
             if (this.settings.ShowYAxis)
                 for (int i = 0; i < this.settings.LineThickness; i++)
-                    this.graphics.DrawLine(this.axisPen, upperLineX + i, 0, upperLineX + i, this.ClientSize.Height);
+                    this.DrawLine(this.axisPen, upperLineX + i, 0, upperLineX + i, this.ClientSize.Height);
             if (this.settings.ShowTickMarks)
                 this.DrawTickMarks();
         }
@@ -324,7 +466,7 @@ namespace Calculator
             for (int tickX = 0, currentX = tickOffsetX; tickX < this.settings.XTickMarkCount + 1; tickX++, currentX += tickDistanceX)
             {
                 if (currentX == this.origin.X) continue;
-                this.graphics.DrawLine(this.ticksPen, currentX, lowerY, currentX, upperY);
+                this.DrawLine(this.ticksPen, currentX, lowerY, currentX, upperY);
             }
 
             int tickDistanceY = this.ClientSize.Height / this.settings.YTickMarkCount;
@@ -334,11 +476,11 @@ namespace Calculator
             for (int tickY = 0, currentY = tickOffsetY; tickY < this.settings.YTickMarkCount + 1; tickY++, currentY += tickDistanceY)
             {
                 if (currentY == this.origin.Y) continue;
-                this.graphics.DrawLine(this.ticksPen, lowerX, currentY, upperX, currentY);
+                this.DrawLine(this.ticksPen, lowerX, currentY, upperX, currentY);
             }
         }
 
-        private PointD[] GetGraphPoints(Delegate function, object graphData)
+        private GraphData GetGraphData(Delegate function)
         {
             var functionToEvaluate = (Func<double, double>)function;
             int pointCount = this.settings.PointsToGraph;
@@ -356,9 +498,9 @@ namespace Calculator
                 valueX += increment;
             }
 
-            return points;
+            return new GraphData(function, points);
         }
-        
+
         private void DrawGraphPoints(PointD[] points)
         {
             int pointCount = points.Length;
@@ -367,6 +509,10 @@ namespace Calculator
             {
                 var firstPoint = points[i - 1];
                 var secondPoint = points[i];
+                if (firstPoint.X.IsNaNorInfinity() || firstPoint.Y.IsNaNorInfinity() || secondPoint.X.IsNaNorInfinity() || secondPoint.Y.IsNaNorInfinity())
+                {
+                    continue;
+                }
 
                 int x1 = this.origin.X + (int)(this.scaleFactor.X * firstPoint.X);
                 int y1 = this.origin.Y - (int)(this.scaleFactor.Y * firstPoint.Y);
@@ -380,11 +526,18 @@ namespace Calculator
                                  (y2 > -1 && y2 < this.ClientSize.Height));
                 if (inBounds)
                 {
-                    this.graphics.DrawLine(this.graphLinePen, x1, y1, x2, y2);
+                    this.DrawLine(this.graphLinePen, x1, y1, x2, y2);
                     linesDrawn++;
                 }
             }
-            Console.WriteLine(linesDrawn);
+        }
+
+        private void DrawLine(Pen pen, int x1, int y1, int x2, int y2)
+        {
+            lock (this.graphics)
+            {
+                this.graphics.DrawLine(pen, x1, y1, x2, y2);
+            }
         }
     }
 
@@ -395,7 +548,7 @@ namespace Calculator
             this.XAxisRange = new PointF(-10f, 10f);
             this.YAxisRange = new PointF(-10f, 10f);
             this.XValueRange = new PointF(-100, 100);
-            this.PointsToGraph = 800;
+            this.PointsToGraph = 400;
             this.LineThickness = 1;
             this.XTickMarkCount = 20;
             this.YTickMarkCount = 20;

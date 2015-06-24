@@ -21,3 +21,11 @@ Day 4: Included a utility class project within this project
 	-Draws axis marks, tick marks, and equation lines
 	-Settings class to specify various things, such as whether to show tick marks or gridlines and such
 	
+Day 5: GraphBox is now threadsafe, and can draw multiple equations at once
+       EquationParser can now handle:
+	-Multiple constants in a row
+	-Variables/Constants of varying lengths, case insensitive
+	-Incomplete decimal numbers, such as .5 instead of 0.5
+       EquationParser now has a seperate private class for formatting the equation text
+       Constants with non-simple values are now evaluated to a variable within the delegate before invoking the main body
+       Functions and non-simple Constants are now replaced using $000$ format
