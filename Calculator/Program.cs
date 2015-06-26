@@ -1,63 +1,136 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using System.Diagnostics;
-using System.Runtime.CompilerServices;
-
-namespace Calculator
+﻿namespace Calculator
 {
-    static class Program
+    using System;
+    using System.Collections.Generic;
+    using System.Diagnostics;
+    using System.IO;
+    using System.Linq;
+    using System.Reflection;
+    using System.Text;
+    using System.Threading.Tasks;
+    using System.ComponentModel.Composition;
+    using System.ComponentModel.Composition.Hosting;
+    using JonUtility;
+
+    public interface ICalculatorExtender
     {
-        internal static TraceSource Log;
-        /// <summary>
-        /// The main entry point for the application.
-        /// </summary>
-        [STAThread]
-        static void Main()
+        object[] LoadInstances();
+
+        Type[] LoadTypes();
+    }
+
+    public static class CalculatorSettings
+    {
+        private static Dictionary<Type, List<EquationMember>> dict;
+        internal static TraceListener traceListener;
+        internal static TraceSource Log = new TraceSource("CalculatorSource", SourceLevels.Information);
+        internal static List<Operator> Operators;
+        internal static List<Function> Functions;
+        internal static List<SubExpressionDelimiter> SubExpressionDelimiters;
+        internal static EquationMemberGroup DefaultMemberGroup;
+
+        static CalculatorSettings()
         {
-            Log = new TraceSource("CalculatorSource", SourceLevels.Information); 
-            //Application.EnableVisualStyles();
-            //Application.SetCompatibleTextRenderingDefault(false);
-            //string eqText = @"log10(X) - -7max(3B(B),ABA) + l^2 - 3X(5(X))";
-            //Constant[] constants = new Constant[3];
-            //constants[0] = new Constant("A", "55.7");
-            //constants[1] = new Constant("B", "X - 1");
-            //constants[2] = new Constant("l", "33.21");
+            Trace.AutoFlush = true;
+            traceListener = new TextWriterTraceListener("Trace.txt", "listener");
+            Log.Listeners.Clear();
+            Log.Listeners.Add(traceListener);
 
-            //Function[] functions = new Function[1];
-            //functions[0] = new Function("Square Root", "sqrt", new Func<double, double>(d => Math.Sqrt(d)));
+            Operators = new List<Operator>(Operator.DefaultList);
+            Functions = new List<Function>(Function.DefaultList);
+            SubExpressionDelimiters = new List<SubExpressionDelimiter>(SubExpressionDelimiter.DefaultList);
 
-            //equation = Equation.Create(eqText, constants, new Variable[] { Variable.XVariable }); //, Variable.YVariable, new Variable("TE") });
-            //Stopwatch sw = Stopwatch.StartNew();
-            //sw.Stop();
-            //delegates = new Delegate[10000];
-            //JonUtility.Diagnostics.BenchmarkMethod(methodo, 100, false, s => Console.WriteLine(s));
-            //JonUtility.Diagnostics.BenchmarkMethod(methodo, 100, false, s => Console.WriteLine(s));
-            //someFunc = (Func<double, double>)delegates[0];
-            //JonUtility.Diagnostics.BenchmarkMethod(methodo2, 100, false, s => Console.WriteLine(s));
-         
-            Application.Run(new CalculatorForm());
+            var combinedList = ((IEnumerable<EquationMember>)Operators).Concat(
+                               ((IEnumerable<EquationMember>)Functions)).Concat(
+                               ((IEnumerable<EquationMember>)SubExpressionDelimiters));
+
+            DefaultMemberGroup = new EquationMemberGroup("Default", combinedList);
         }
 
-        private static Equation equation;
-        private static Delegate[] delegates;
-        private static Func<double, double> someFunc;
-        private static int delCounter = 0;
-        private static double someResultz = 0;
-        private static void methodo()
+        public static void AddMember(EquationMember member)
         {
-            Delegate del = EquationParser.ParseEquation(equation, EquationMemberGroup.Default);
-            delegates[delCounter] = del;
-            delCounter++;
-            //object result = del.DynamicInvoke(new object[] { 5.7D });
-            //Console.WriteLine(result.ToString());
+
         }
 
-        private static void methodo2()
+        public static void AddOperator(Operator op)
         {
-            someResultz = someFunc(5.5D);
+            Operator duplicate = Operators.Find(o => o.Shorthand.ToUpper() == op.Shorthand.ToUpper());
+            if (duplicate != null)
+            {
+                throw new Exception("Plugin attempted to add a duplicate operator."); ////
+            }
+
+            Operators.Add(op);
         }
+
+        public static void AddFunction(Function function)
+        {
+            Function duplicate = Functions.Find(f => f.Shorthand.ToUpper() == function.Shorthand.ToUpper());
+            if (duplicate != null)
+            {
+                throw new Exception("Plugin attempted to add a duplicate function."); ////
+            }
+
+            Functions.Add(function);
+        }
+
+        public static void LoadExtension(string filePath)
+        {
+            Assembly extensionAssembly = null;
+            Type[] extensionTypes = null;
+            try
+            {
+                extensionAssembly = Assembly.LoadFile(filePath);
+                extensionTypes = extensionAssembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                Log.TraceError(ex);
+                throw;
+            }
+
+
+            Type extensionManagerType = extensionTypes.FirstOrDefault(type => type.IsClass && typeof(ICalculatorExtender).IsAssignableFrom(type));
+            if (extensionManagerType == null)
+            {
+                return;
+            }
+            
+            ICalculatorExtender extension = (ICalculatorExtender)Activator.CreateInstance(extensionManagerType);
+            object[] instances = TryGetInstances(extension, filePath);
+          
+            foreach (object instance in instances)
+            {
+                Type instanceType = instance.GetType();
+                if (instanceType.IsSubclassOf(typeof(Operator)))
+                {
+                    AddOperator((Operator)instance);
+                }
+                else if (instanceType == typeof(Function))
+                {
+                    AddFunction((Function)instance);
+                }
+            }
+        }
+
+        private static object[] TryGetInstances(ICalculatorExtender extension, string filePath)
+        {
+            try
+            {
+                return extension.LoadInstances();
+            }                
+            catch (Exception)
+            {
+                FileInfo fileInfo = new FileInfo(filePath);
+                throw new Exception("Cannot load extension " + fileInfo.Name + ": contains one or more errors.");
+            }
+        }
+
+        [Conditional("TRACE")]
+        public static void SetListener(TraceListener listener)
+        {
+            traceListener = listener;
+        }
+
     }
 }

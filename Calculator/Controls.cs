@@ -42,7 +42,9 @@ namespace Calculator
     using System.Threading.Tasks;
     using System.Windows.Forms;
     using JonUtility;
-    using U = JonUtility.Utility;  
+    using U = JonUtility.Utility;
+    using CS = CalculatorSettings;
+    using System.Collections;
 
     public enum GraphMode : int
     {
@@ -169,20 +171,43 @@ namespace Calculator
             this.SetBounds(left, top, width, height);
             this.graphBox = U.NewControl<GraphBox>(this, string.Empty, 25, 25, 301, 301);
             var btn = U.NewControl<Button>(this, "lol", 0, 0, 80, 22);
+
             btn.Click += (sender, e) =>
             {
                 double randDouble = JonUtility.Diagnostics.GetRandomDouble(4);
                 Constant[] constants = new Constant[3];
                 constants[0] = new Constant("A", "55.7");
-                constants[1] = new Constant("B", "X - 1");
+                constants[1] = new Constant("B", "3)");
                 constants[2] = new Constant("C", "33.21");
-                Equation[] equations = new Equation[5];
-                equations[0] = Equation.Create(randDouble.ToString() + @"x^2 - .25x^3 + max(x, 3) - -2", constants);
-                equations[1] = Equation.Create(@"3log10(" + randDouble.ToString() + "X)", constants);
-                equations[2] = Equation.Create(randDouble.ToString() + @"x^4 - x^3 + x^2 - x + 1", constants);
-                equations[3] = Equation.Create(randDouble.ToString() + @"AB + l(X/C)", constants);
-                equations[4] = Equation.Create(randDouble.ToString() + @"X", constants);
-                Delegate[] delegates = equations.Select(eq => EquationParser.ParseEquation(eq, null)).ToArray();
+                Equation[] equations = new Equation[1];
+                var builder = new StringBuilder();
+                for (int i = 0; i < 5; i++)
+                {
+                    builder.Append(JonUtility.Diagnostics.GetRandomNumber(0, 10));
+                }
+                //equations[0] = Equation.Create(@"  2.2.2 + .53.4 - .33.333.333.55.3. + 3.24.52.35 .57X.6  x^2 - -1   5* ***6 + 2.22 - " + builder.ToString(), constants);
+                //equations[0] = Equation.Create(randDouble.ToString() + @"x^2 3 -   4 (2 x * -5 / 0)", constants);
+                //equations[0] = Equation.Create(randDouble.ToString() + @"x^2 - .25x^3 + max(x, 3) - -2", constants);
+                //equations[1] = Equation.Create(@"3log10(" + randDouble.ToString() + "X)", constants);
+                //equations[0] = Equation.Create(@".6023x^4 - x^3 + x^2 - x + 1", constants);
+                //equations[0] = Equation.Create(@"xround(.2555555X^2,2) - 2", constants);
+                //equations[0] = Equation.Create(@".5B.5BX5.5 + 1.(X/B)X5.2max(5,x(3max(4,5)XX))3", constants);
+                equations[0] = Equation.Create(@"5..3X(.X(+23max(..,3)))", constants);
+                //equations[4] = Equation.Create(randDouble.ToString() + @"X", constants);
+                Delegate[] delegates = null;
+                try
+                {
+                    delegates = equations.Select(eq => EquationParser.ParseEquation(eq, null)).ToArray();
+                }
+                catch (AggregateException ex)
+                {
+                    var exceptions = ex.Flatten().InnerExceptions;
+                    foreach (ParsingException exception in exceptions)
+                    {
+                        Console.WriteLine(exception.ParsingErrorMessage);
+                    }
+                    throw;
+                }
                 this.graphBox.Graph(delegates);
             };
             var btn2 = U.NewControl<Button>(this, "Clear", btn.Right + 10, 0, 80, 22);
@@ -243,7 +268,7 @@ namespace Calculator
         private PointD scaleFactor;
         private GraphStatus graphStatus = GraphStatus.Idle;
         private object statusUpdateLock = new object();
-              
+
         public GraphBox()
         {
             this.SizeMode = PictureBoxSizeMode.Normal;
@@ -285,13 +310,13 @@ namespace Calculator
             {
                 return this.settings;
             }
-        }         
+        }
 
         public void Clear(bool redrawGrid = false)
         {
             this.Clear(true, redrawGrid);
         }
-        
+
         public void Graph(IEnumerable<Delegate> functions)
         {
             // Disallow multiple calls to Graph
@@ -337,7 +362,7 @@ namespace Calculator
             }
             catch (AggregateException ex)
             {
-                Program.Log.TraceError(ex);
+                CS.Log.TraceError(ex);
             }
 
             this.Invoke(new Action(() => { this.Image = this.image; }));
@@ -484,8 +509,8 @@ namespace Calculator
         {
             var functionToEvaluate = (Func<double, double>)function;
             int pointCount = this.settings.PointsToGraph;
-            double min = (double)this.settings.XValueRange.X;
-            double max = (double)this.settings.XValueRange.Y;
+            double min = this.settings.XValueRange.X.IsNaNorInfinity() ? this.settings.XAxisRange.X - 1 : this.settings.XValueRange.X;
+            double max = this.settings.XValueRange.Y.IsNaNorInfinity() ? this.settings.XAxisRange.Y + 1 : this.settings.XValueRange.Y;
             double range = max - min;
             double increment = range / pointCount;
 
@@ -545,9 +570,9 @@ namespace Calculator
     {
         public GraphSettings()
         {
-            this.XAxisRange = new PointF(-10f, 10f);
-            this.YAxisRange = new PointF(-10f, 10f);
-            this.XValueRange = new PointF(-100, 100);
+            this.XAxisRange = new PointD(-10f, 10f);
+            this.YAxisRange = new PointD(-10f, 10f);
+            this.XValueRange = new PointD(Double.NaN, Double.NaN);
             this.PointsToGraph = 400;
             this.LineThickness = 1;
             this.XTickMarkCount = 20;
@@ -558,11 +583,11 @@ namespace Calculator
             this.ShowYAxis = true;
         }
 
-        public PointF XAxisRange { get; set; }
+        public PointD XAxisRange { get; set; }
 
-        public PointF YAxisRange { get; set; }
+        public PointD YAxisRange { get; set; }
 
-        public PointF XValueRange { get; set; }
+        public PointD XValueRange { get; set; }
 
         public int PointsToGraph { get; set; }
 

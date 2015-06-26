@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Calculator", "Calculator\Ca
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JonUtility", "..\JonUtility\JonUtility\JonUtility.csproj", "{AFCF9D3A-F066-40D7-8518-F57A4B4600BF}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CalculatorProgram", "CalculatorForm\CalculatorProgram.csproj", "{9940CAD5-60EE-4FA8-9C35-64C8F0333BE0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{AFCF9D3A-F066-40D7-8518-F57A4B4600BF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{AFCF9D3A-F066-40D7-8518-F57A4B4600BF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{AFCF9D3A-F066-40D7-8518-F57A4B4600BF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9940CAD5-60EE-4FA8-9C35-64C8F0333BE0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9940CAD5-60EE-4FA8-9C35-64C8F0333BE0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9940CAD5-60EE-4FA8-9C35-64C8F0333BE0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9940CAD5-60EE-4FA8-9C35-64C8F0333BE0}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

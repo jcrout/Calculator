@@ -29,3 +29,5 @@ Day 5: GraphBox is now threadsafe, and can draw multiple equations at once
        EquationParser now has a seperate private class for formatting the equation text
        Constants with non-simple values are now evaluated to a variable within the delegate before invoking the main body
        Functions and non-simple Constants are now replaced using $000$ format
+
+Day 6-7: Some equation validation/extension support, not much time spent on this

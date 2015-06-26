@@ -7,6 +7,7 @@
 namespace Calculator
 {
     using System;
+    using System.Collections;
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Drawing;
@@ -18,20 +19,25 @@ namespace Calculator
     using System.Threading.Tasks;
     using System.Windows.Forms;
     using JonUtility;
-    using System.Collections;
+    using CS = CalculatorSettings;
 
     [DebuggerDisplay("{Text}")]
     public abstract class Equation
     {
-        public abstract IEnumerable<Variable> Variables { get; set; }
         public abstract string Text { get; set; }
         public abstract IEnumerable<Constant> Constants { get; set; }
+        public abstract IEnumerable<Variable> Variables { get; set; }
 
         public static Equation Create(string text, IEnumerable<Constant> constants = null, IEnumerable<Variable> variables = null)
         {
             return new DefaultEquation(text,
                 constants ?? new Constant[0],
                 variables ?? new Variable[1] { Variable.XVariable });
+        }
+
+        public override string ToString()
+        {
+            return this.Text ?? string.Empty;
         }
 
         private class DefaultEquation : Equation
@@ -84,6 +90,7 @@ namespace Calculator
         }
     }
 
+    [DebuggerDisplay("{Name}: {Shorthand}")]
     public abstract class EquationMember
     {
         public abstract string Name { get; }
@@ -93,40 +100,24 @@ namespace Calculator
         {
             return String.Equals(this.Shorthand, text);
         }
-    }
 
-    public abstract class EquationMethodMember : EquationMember
-    {
-        private string name;
-        public override string Name { get { return name; } }
-        private string shorthand;
-        public override string Shorthand { get { return shorthand; } }
-
-        private Delegate method;
-        public Delegate Method { get { return method; } }
-
-        protected EquationMethodMember(string name, string shorthand, Delegate method)
+        internal Type GetHighestDerivedType()
         {
-            this.name = name;
-            this.shorthand = shorthand;
-            this.method = method;
+            Type t = this.GetType();
+            if (t.BaseType == typeof(EquationMember))
+                return t;
+
+            for (; ; )
+            {
+                t = t.BaseType;
+                if (t.BaseType == typeof(EquationMember))
+                    return t;
+            }
         }
-    }
 
-    [DebuggerDisplay("{Name} ({Shorthand})")]
-    public abstract class OperatorBase : EquationMember
-    {
-        private string name;
-        public override string Name { get { return name; } }
-        private string shorthand;
-        public override string Shorthand { get { return shorthand; } }
-        public int Order { get; set; }
-
-        protected OperatorBase(string name, string shorthand, int order)
+        public override string ToString()
         {
-            this.name = name;
-            this.shorthand = shorthand;
-            this.Order = order;
+            return Shorthand.ToString();
         }
     }
 
@@ -205,6 +196,7 @@ namespace Calculator
             public override Expression GetExpression(Expression arg1, Expression arg2)
             { return Expression.Modulo(arg1, arg2); }
         }
+
         private class ExponentOperator : Operator
         {
             public override string Name { get { return "Exponent"; } }
@@ -213,6 +205,7 @@ namespace Calculator
             public override Expression GetExpression(Expression arg1, Expression arg2)
             { return Expression.Power(arg1, arg2); }
         }
+
     }
 
     [DebuggerDisplay("{Name} ({Shorthand}): {argumentCount} arguments")]
@@ -233,6 +226,8 @@ namespace Calculator
                 new Func<double, double, double>((d, d2) => Math.Max(d, d2))));
             list.Add(new Function("Log10", "log10",
                 new Func<double, double>(d => Math.Log10(d))));
+            list.Add(new Function("Round", "round",
+                new Func<double, double, double>((d1, d2) => Math.Round(d1, (int)d2, MidpointRounding.AwayFromZero))));
             defaultList = list.ToArray();
         }
 
@@ -278,139 +273,462 @@ namespace Calculator
     [DebuggerDisplay("{Shorthand,nq}:  {Value,nq}")]
     public class Constant : Variable
     {
-        public string Value { get; set; } // either a string double like "55.7", or a non-numeric string like "X - 5"
-
         public Constant(string shorthand, string value, string name = "")
             : base(shorthand, name ?? "Constant")
         {
             this.Value = value;
         }
 
-        public bool IsConstantValue
+        public string Value { get; set; } // either a string double like "55.7", or a non-numeric string like "X - 5"
+
+        public bool IsNumber
         {
             get
             {
                 double d;
-                bool result = double.TryParse(Value, out d);
+                bool result = double.TryParse(this.Value, out d);
                 return result;
             }
         }
     }
 
+    public class SubExpressionDelimiter : EquationMember
+    {
+        private readonly string left;
+        private readonly string right;
+        private string shorthand;
+
+        public SubExpressionDelimiter(string shorthand)
+        {
+            this.shorthand = shorthand;
+            int index = shorthand.IndexOf(',');
+            if (index == -1)
+                throw new ArgumentException("shorthand must contain a single comma delimiter between the left and right values");
+            this.left = shorthand.Substring(0, index);
+            this.right = shorthand.Substring(index + 1);
+        }
+
+        public override string Name
+        {
+            get { return "Delimiter"; }
+        }
+
+        public override string Shorthand
+        {
+            get { return shorthand; }
+        }
+
+        public string this[int index]
+        {
+            get
+            {
+                return index <= 0 ? this.left : this.right;
+            }
+        }
+
+        public string this[bool leftDelimiter]
+        {
+            get
+            {
+                return leftDelimiter ? this.left : this.right;
+            }
+        }
+
+        public string Left
+        {
+            get
+            {
+                return this.left;
+            }
+        }
+
+        public string Right
+        {
+            get
+            {
+                return this.right;
+            }
+        }
+
+        private static SubExpressionDelimiter[] defaultList;
+        public static SubExpressionDelimiter[] DefaultList { get { return defaultList; } }
+
+        static SubExpressionDelimiter()
+        {
+            defaultList = new SubExpressionDelimiter[]
+            {
+                new SubExpressionDelimiter("(,)"),
+                new SubExpressionDelimiter("[,]")
+            };
+        }
+    }
+
     public class EquationMemberGroup
+        : IEnumerable<EquationMember>
     {
         private string name;
-        public string Name { get { return name; } }
-
+        private Dictionary<Type, List<EquationMember>> dictionary;
         private IEnumerable<EquationMember> members;
-        public IEnumerable<EquationMember> Members { get { return members; } }
 
         public EquationMemberGroup(string name, IEnumerable<EquationMember> members)
         {
             this.name = Name;
             this.members = members;
+            this.dictionary = members.GroupBy(
+                member => member.GetHighestDerivedType())
+                .ToDictionary(
+                    g => g.Key, g => new List<EquationMember>(
+                        from m in g
+                        select m));
         }
 
-        private static EquationMemberGroup _Default;
-        public static EquationMemberGroup Default { get { return _Default; } }
+        public string Name { get { return name; } }
 
-        static EquationMemberGroup()
+        public IEnumerable<EquationMember> this[Type memberType]
         {
-            var operators = (IEnumerable<EquationMember>)Operator.DefaultList;
-            var functions = (IEnumerable<EquationMember>)Function.DefaultList;
-            var combinedLists = operators.Concat(functions);
-
-            _Default = new EquationMemberGroup("Default", combinedLists);
+            get
+            {
+                var list = dictionary[memberType];
+                foreach (var member in list)
+                {
+                    yield return member;
+                }
+            }
         }
+
+        private IEnumerable<T> GetList<T>() where T : EquationMember
+        {
+            var list = dictionary[typeof(T)];
+            foreach (T member in list)
+            {
+                yield return member;
+            }
+        }
+
+        public IEnumerable<EquationMember> Members
+        {
+            get
+            {
+                return this.members;
+            }
+        }
+
+        public IEnumerator<EquationMember> GetEnumerator()
+        {
+            foreach (var member in members)
+            {
+                yield return member;
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return this.GetEnumerator();
+        }
+
+        public IEnumerable<Operator> Operators
+        {
+            get
+            {
+                return GetList<Operator>();
+            }
+        }
+
+        public IEnumerable<Function> Functions
+        {
+            get
+            {
+                return GetList<Function>();
+            }
+        }
+
+        public IEnumerable<SubExpressionDelimiter> SubExpressionDelimiters
+        {
+            get
+            {
+                return GetList<SubExpressionDelimiter>();
+            }
+        }
+    }
+
+    public abstract class EquationValidator
+    {
+        private static EquationValidator defaultEquationValidator = new DefaultEquationValidator();
+
+        public static EquationValidator Default
+        {
+            get
+            {
+                return defaultEquationValidator;
+            }
+        }
+
+        public abstract void Validate(Equation equation);
+
+        private class DefaultEquationValidator : EquationValidator
+        {
+            public DefaultEquationValidator()
+            {
+            }
+
+            public override void Validate(Equation equation)
+            {
+                List<Exception> exceptions = new List<Exception>();
+                this.ValidateSpaces(equation, exceptions);
+
+                if (exceptions.Count > 0)
+                {
+                    throw new AggregateException(exceptions);
+                }
+            }
+
+            private void ValidateSpaces(Equation equation, List<Exception> exceptions)
+            {
+                //string pattern = @"\d\s+\d";
+                string pattern = @"\S\s+\S";
+                string operatorPattern = "";// equation.Text.GetOperatorPattern(false);
+                var matches = Regex.Matches(equation.Text, pattern, RegexOptions.IgnoreCase);
+                foreach (Match match in matches)
+                {
+                    bool containsOperator = Regex.IsMatch(match.Value, operatorPattern);
+                    if (!containsOperator)
+                    {
+
+                    }
+
+                    // var  operatorMatches = Regex.Matches(match.Value, operatorPattern)
+                }
+            }
+        }
+    }
+
+    [Serializable]
+    public class ParsingException : Exception
+    {
+        public ParsingException() { }
+        public ParsingException(string message) : base(message) { }
+        public ParsingException(string message, Exception inner) : base(message, inner) { }
+        protected ParsingException(
+          System.Runtime.Serialization.SerializationInfo info,
+          System.Runtime.Serialization.StreamingContext context)
+            : base(info, context) { }
+
+        public string ParsingErrorMessage
+        {
+            get
+            {
+                if (this.Data.Count == 0)
+                {
+                    return string.Empty;
+                }
+
+                foreach (DictionaryEntry entry in this.Data)
+                {
+                    var matchInfo = (MatchInfo)entry.Value;
+                    return entry.Key.ToString() + ": \"" + matchInfo.Value + "\" at index " + matchInfo.Index.ToString();
+                }
+                return "";
+            }
+        }
+    }
+
+    [Serializable]
+    public class EquationValidationException : Exception
+    {
+        public EquationValidationException() { }
+        public EquationValidationException(string message) : base(message) { }
+        public EquationValidationException(string message, Exception inner) : base(message, inner) { }
+        protected EquationValidationException(
+          System.Runtime.Serialization.SerializationInfo info,
+          System.Runtime.Serialization.StreamingContext context)
+            : base(info, context) { }
+    }
+
+    [Serializable, DebuggerDisplay(@"{errorType}: {value} at index {index} in {target}")]
+    public class EquationValidationErrorInfo
+    {
+        private EquationValidationErrorType errorType;
+        private object target;
+        private int index;
+        private string value;
+
+        public EquationValidationErrorInfo(EquationValidationErrorType errorType, object target, int index, string value)
+        {
+            this.errorType = errorType;
+            this.target = target;
+            this.index = index;
+            this.value = value;
+        }
+
+        public EquationValidationErrorType ErrorType
+        {
+            get
+            {
+                return this.errorType;
+            }
+        }
+    }
+
+    [Serializable]
+    public enum EquationValidationErrorType : int
+    {
+        Unknown,
+        InvalidSpacing,
+        MultipleSequentialOperators,
+        OperatorMissingValue,
+        NumberTooLarge,
+        TooManyDecimalPlaces,
+        EmptySubExpression
     }
 
     public abstract class EquationParser
     {
         private static EquationParser _Default = new DefaultEquationParser();
+
         public static EquationParser Default
         {
             get { return _Default; }
         }
 
-        public abstract string[,] SubExpressionDelimiters { get; }
+        public abstract void Validate(Equation equation, EquationMemberGroup members = null);
 
-        public abstract Delegate Parse(Equation equation, object parseData = null);
+        public abstract Delegate Parse(Equation equation, EquationMemberGroup members = null);
 
         public static Delegate ParseEquation(Equation equation, EquationMemberGroup members)
         {
-            return _Default.Parse(equation, members ?? EquationMemberGroup.Default);
+            return _Default.Parse(equation, members ?? CS.DefaultMemberGroup);
         }
 
         private class DefaultEquationParser : EquationParser
         {
-            private static string[,] subExpressionDelimiters = new string[2, 2];
-
-            static DefaultEquationParser()
+            private class _InternalData
             {
-                subExpressionDelimiters[0, 0] = "(";
-                subExpressionDelimiters[0, 1] = ")";
-                subExpressionDelimiters[1, 0] = "[";
-                subExpressionDelimiters[1, 1] = "]";
-            }
+                private int currentExpression = -1;
 
-            public override string[,] SubExpressionDelimiters
-            {
-                get { return subExpressionDelimiters; }
-            }
+                public const char FunctionDelimiter = '$';
+                public int FunctionLength { get { return 5; } }
+                public int ValueLength { get { return 5; } }
+                public string CurrentExpression { get { return FunctionDelimiter + currentExpression.ToString("000") + FunctionDelimiter; } }
+                public string Text { get; set; }
+                public Equation Equation { get; set; }
+                public EquationMemberGroup Members { get; set; }
+                public ParameterExpression[] Variables { get; set; }
+                public List<Operator>[] Operators { get; set; }
+                public Constant[] Constants { get; set; }
+                public Function[] Functions { get; set; }
+                public Dictionary<string, Expression> SubExpressions { get; set; }
+                public Dictionary<string, Function> UsedFunctions { get; set; }
+                public EquationTextFormatter Formatter { get; set; }
+                public List<Tuple<ParameterExpression, Expression>> ConstantExpressions { get; set; }
 
+                public _InternalData(Equation equation, EquationMemberGroup members)
+                {
+                    this.Equation = equation;
+                    this.Members = members;
+                    this.Functions = (from f in members.Members.OfType<Function>()
+                                      orderby f.Shorthand.Length descending
+                                      select f).ToArray();
+                    this.Operators = (from o in this.Members.OfType<Operator>()
+                                      group o by o.Order into oGroup
+                                      orderby oGroup.Key descending
+                                      select new List<Operator>(from g in oGroup select g)).ToArray();
+                    this.Constants = equation.Constants.OrderByDescending(x => x.Shorthand.Length).ToArray();
+                    this.Variables = equation.Variables.Select(v => Expression.Parameter(typeof(double), v.Shorthand)).ToArray();
+                    this.Text = equation.Text;
+                    this.SubExpressions = new Dictionary<string, Expression>();
+                    this.UsedFunctions = new Dictionary<string, Function>();
+                    this.ConstantExpressions = new List<Tuple<ParameterExpression, Expression>>();
+                    this.Formatter = new EquationTextFormatter(this);
+                }
+
+                public void RegisterFunction(Function function, int startIndex)
+                {
+                    currentExpression++;
+                    string name = FunctionDelimiter + currentExpression.ToString("000") + FunctionDelimiter;
+                    this.Text = this.Text.Remove(startIndex, function.Shorthand.Length);
+                    this.Text = this.Text.Insert(startIndex, name);
+                    UsedFunctions.Add(name, function);
+                }
+
+                public string RegisterExpression(Expression exp)
+                {
+                    currentExpression++;
+                    string name = CurrentExpression;
+                    SubExpressions.Add(name, exp);
+                    return name;
+                }
+
+                private string operatorPattern;
+                public string GetOperatorPattern(bool excludeSubtraction = false)
+                {
+                    if (operatorPattern != null && !excludeSubtraction)
+                    {
+                        return operatorPattern;
+                    }
+
+                    StringBuilder sb = new StringBuilder();
+                    if (Operators.Count() > 0)
+                    {
+                        foreach (var cList in Operators)
+                        {
+                            foreach (var c in cList)
+                            {
+                                if (excludeSubtraction && ReferenceEquals(c, Operator.Subtraction))
+                                {
+                                    continue;
+                                }
+
+                                sb.Append(Regex.Escape(c.Shorthand));
+                                sb.Append('|');
+                            }
+                        }
+
+                        if (sb.Length > 0)
+                        {
+                            sb.Remove(sb.Length - 1, 1);
+                        }
+
+                    }
+
+                    operatorPattern = sb.ToString();
+                    return operatorPattern;
+                }
+
+            }
+   
             private class EquationTextFormatter
             {
                 private _InternalData data;
                 private List<MatchInfo> list;
+                private object target;
                 private string text;
-                private string leftDelimiterPattern;
-                private string rightDelimiterPattern;
-                private string variablePattern;
 
                 public EquationTextFormatter(_InternalData data)
                 {
                     this.data = data;
-                    this.leftDelimiterPattern = GetDelimiterStrings(0);
-                    this.rightDelimiterPattern = GetDelimiterStrings(1);
-                    this.variablePattern = GetVariablePattern();
                 }
-
-                private string GetDelimiterStrings(int side = 0)
-                {
-                    int count = subExpressionDelimiters.GetUpperBound(0) + 1;
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append(Regex.Escape(subExpressionDelimiters[0, side]));
-                    for (int i = 1; i < count; i++)
-                    {
-                        sb.Append("|");
-                        sb.Append(Regex.Escape(subExpressionDelimiters[i, side]));
-                    }
-                    return sb.ToString();
-                }
-
-                private string GetVariablePattern()
-                {
-                    StringBuilder sb = new StringBuilder();
-                    if (data.Equation.Variables.Count() > 0)
-                    {
-                        foreach (var v in data.Equation.Variables)
-                        {
-                            sb.Append(Regex.Escape(v.Shorthand));
-                            sb.Append('|');
-                        }
-                        sb.Remove(sb.Length - 1, 1);
-                    }
-                    return sb.ToString();
-                }
-
+                      
                 private bool CheckIfInsideFunction(int index)
                 {
-                    if (index == 0) return false;
+                    if (index == 0 || index == this.text.Length - 1) return false;
+
                     if (text[index + 1] == _InternalData.FunctionDelimiter)
                     {
-                        if (index > 1)
+                        if (index >= data.FunctionLength + 2)
                         {
                             if (text[index - data.FunctionLength + 2] == _InternalData.FunctionDelimiter)
+                            {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+
+                    if (text[index] == _InternalData.FunctionDelimiter)
+                    {
+                        if (index + data.FunctionLength - 1 < this.text.Length)
+                        {
+                            if (text[index + data.FunctionLength - 1] == _InternalData.FunctionDelimiter)
                             {
                                 return true;
                             }
@@ -425,7 +743,7 @@ namespace Calculator
                     string pattern = @"\D\.{1}\d+";
                     var matches = Regex.Matches(text, pattern);
                     foreach (Match match in matches)
-                    {                   
+                    {
                         list.Add(new MatchInfo(match.Index + 1, 0, "0"));
                     }
 
@@ -435,12 +753,33 @@ namespace Calculator
                     {
                         list.Add(new MatchInfo(match.Index, 0, "0"));
                     }
+
+                    pattern = @"\d+\.{1}\D";
+                    matches = Regex.Matches(text, pattern);
+                    foreach (Match match in matches)
+                    {
+                        list.Add(new MatchInfo(match.Index + match.Length - 2, 1, string.Empty));
+                    }
                 }
 
-                private void AppendFormatChanges_MultiplyNumbers()
+                private void MultiplyNumbers()
                 {
-                    string pattern = @"\d[" + variablePattern + "|" + leftDelimiterPattern + "|" + Regex.Escape(_InternalData.FunctionDelimiter.ToString()) + "]";
+                    // check for any case where a number is next to a non-number/operator and multiply them, such as 5(3X) => 5*(3*X)
+                    string pattern = @"\d(" + this.data.Equation.Variables.GetRegexPattern() +
+                                      "|" + this.data.Members.SubExpressionDelimiters.GetRegexPattern(true) + "|" +
+                                      Regex.Escape(_InternalData.FunctionDelimiter.ToString()) + ")";
                     var matches = Regex.Matches(text, pattern, RegexOptions.IgnoreCase);
+                    foreach (Match match in matches)
+                    {
+                        if (CheckIfInsideFunction(match.Index)) continue;
+                        list.Add(new MatchInfo(match.Index + 1, 0, Operator.Multiplication.Shorthand));
+                    }
+  
+                    // same thing, but with the number on the right side
+                    pattern = "(" + this.data.Equation.Variables.GetRegexPattern() +
+                                      "|" + this.data.Members.SubExpressionDelimiters.GetRegexPattern(false) + "|" +
+                                      Regex.Escape(_InternalData.FunctionDelimiter.ToString()) + @")\d";
+                    matches = Regex.Matches(text, pattern, RegexOptions.IgnoreCase);
                     foreach (Match match in matches)
                     {
                         if (CheckIfInsideFunction(match.Index)) continue;
@@ -448,38 +787,50 @@ namespace Calculator
                     }
                 }
 
-                private void AppendFormatChanges_MultiplyVariable()
+                private void MultiplyVariables()
                 {
-                    string leftDelimiterPattern = "(" + this.leftDelimiterPattern + ")";
-                    foreach (var v in data.Variables)
+                    string leftDelimiterPattern = "(" + Regex.Escape(_InternalData.FunctionDelimiter.ToString()) + "|" + 
+                                                  this.data.Members.SubExpressionDelimiters.GetRegexPattern(true) + "|" +
+                                                  this.data.Equation.Variables.GetRegexPattern() + ')';
+                    foreach (var v in data.Equation.Variables)
                     {
-                        string pattern = v.Name.ToUpper() + leftDelimiterPattern;
+                        string pattern = v.Shorthand + leftDelimiterPattern;
                         var matches = Regex.Matches(text, pattern, RegexOptions.IgnoreCase);
                         foreach (Match match in matches)
                         {
-                            list.Add(new MatchInfo(match.Index + 1, 0, Operator.Multiplication.Shorthand));
+                            list.Add(new MatchInfo(match.Index + v.Shorthand.Length, 0, Operator.Multiplication.Shorthand));
+                        }
+                    }
+
+                    string rightDelimiterPattern = "(" + Regex.Escape(_InternalData.FunctionDelimiter.ToString()) + "|" +
+                                                   this.data.Members.SubExpressionDelimiters.GetRegexPattern(false) + ")"; 
+                    foreach (var v in data.Equation.Variables)
+                    {
+                        string pattern = rightDelimiterPattern + v.Shorthand;
+                        var matches = Regex.Matches(text, pattern, RegexOptions.IgnoreCase);
+                        foreach (Match match in matches)
+                        {
+                            list.Add(new MatchInfo(match.Index + match.Length - v.Shorthand.Length, 0, Operator.Multiplication.Shorthand));
                         }
                     }
                 }
 
-                private void AppendFormatChanges_MultiplySubExpressionDelimiters()
+                private void MultiplyAdjacentSubExpressionDelimiters()
                 {
-                    int count = subExpressionDelimiters.GetUpperBound(0) + 1;
-                    string leftDelimiters = "(" + this.leftDelimiterPattern + ")";
-                    for (int i = 0; i < count; i++)
+                    foreach (var delimiter in this.data.Members.SubExpressionDelimiters)
                     {
-                        string pattern = Regex.Escape(subExpressionDelimiters[i, 1]) + leftDelimiters;
+                        string pattern = Regex.Escape(delimiter.Right) + Regex.Escape(delimiter.Left);
                         var matches = Regex.Matches(text, pattern, RegexOptions.IgnoreCase);
                         foreach (Match match in matches)
                         {
-                            list.Add(new MatchInfo(match.Index + subExpressionDelimiters[i, 0].Length, 0, Operator.Multiplication.Shorthand));
+                            list.Add(new MatchInfo(match.Index + delimiter.Right.Length, 0, Operator.Multiplication.Shorthand));
                         }
                     }
                 }
 
-                private void AppendFormatChanges_ReplaceDoubleNegatives()
+                private void ReplaceDoubleNegatives()
                 {
-                    string doubleNegativePattern = @"-{1}\s+-{1}";
+                    string doubleNegativePattern = @"-{2}";
                     var matches = Regex.Matches(text, doubleNegativePattern);
                     foreach (Match match in matches)
                     {
@@ -487,10 +838,32 @@ namespace Calculator
                     }
                 }
 
+                private void ReplaceNegativeOneWithNegativeOneTimesValue()
+                {
+                    string yoyo = data.GetOperatorPattern(true);
+                    string negPattern = @"(" + yoyo + @")\s*" + Operator.Subtraction.Shorthand + @"{1}\s*";
+                    var matches = Regex.Matches(this.text, negPattern);
+                    int count = matches.Count - 1;
+                    for (int i = count; i > -1; i--)
+                    {
+                        Match match = matches[i];
+                        string replacementText = match.Value.Substring(0, 1) + "-1*";
+                        this.list.Add(new MatchInfo(match.Index, match.Length, replacementText));
+                    }
+                }
+
+                private void ZeroMinus()
+                {
+                    string negPattern213 = @"^\s*-";
+                    // equationFragment = Regex.Replace(equationFragment, negPattern213, "0-");
+
+                }
+
                 private void ApplyChanges()
                 {
                     if (list.Count == 0) return;
                     list.Sort((m1, m2) => m1.Index > m2.Index ? 1 : m1.Index < m2.Index ? -1 : 0);
+
                     int newLength = text.Length +
                         list.Sum(mi => mi.Value.Length - mi.Length);
                     int previousIndex = 0;
@@ -522,34 +895,234 @@ namespace Calculator
                     this.text = new String(newString);
                 }
 
-                public string FormatText(string text)
+                public string FormatText(object target, string text)
                 {
+                    this.target = target;
                     this.text = text;
                     this.list = new List<MatchInfo>();
+
                     ReplaceIncompleteDecimalNumbers();
-                    AppendFormatChanges_MultiplyNumbers();
-                    AppendFormatChanges_MultiplyVariable();
-                    AppendFormatChanges_MultiplySubExpressionDelimiters();
-                    AppendFormatChanges_ReplaceDoubleNegatives();
+                    ReplaceDoubleNegatives();
                     ApplyChanges();
+                    this.list.Clear();
+
+                    MultiplyNumbers();
+                    MultiplyVariables();
+                    MultiplyAdjacentSubExpressionDelimiters();
+                    ApplyChanges();
+                    this.list.Clear();
+
+                    ReplaceNegativeOneWithNegativeOneTimesValue();
+                    ApplyChanges();
+
                     return this.text;
+                }
+
+                //interface IFormatAction
+                //{
+                //    string Name { get; }
+
+                //    string FormatString(string text);                    
+                //}
+
+
+                //private class ReplaceIncompleteDecimalNumbers : IFormatAction
+                //{
+                //    public string Name
+                //    {
+                //        get { return "Replace Incomplete Decimal Numbers"; }
+                //    }
+
+                //    public string FormatString(string text)
+                //    {
+                //        throw new NotImplementedException();
+                //    }
+                //}
+            }
+
+            private class SubExpressionIndex
+            {
+                public int X { get; set; }
+                public int Y { get; set; }
+                public string Left { get; set; }
+                public string Right { get; set; }
+
+                public SubExpressionIndex(int x, int y, string left, string right)
+                {
+                    this.X = x;
+                    this.Y = y;
+                    this.Left = left;
+                    this.Right = right;
                 }
             }
 
-            public override Delegate Parse(Equation equation, object parseData)
+            private class OperatorIndexListing
             {
-                EquationMemberGroup members = parseData is EquationMemberGroup ? (EquationMemberGroup)parseData : EquationMemberGroup.Default;
-                _InternalData data = new _InternalData(equation, members);
-                Program.Log.TraceInformation("Parsing equation " + equation.Text.ToString());
-                GetFunctionList(data);
-                FixConstants2(data);
+                public int Index { get; set; }
+                public Operator Operator { get; set; }
+            }
 
-                // must occur after obtaining used function list, because those functions might have numbers in them at the end
-                data.Text = data.Formatter.FormatText(data.Text);
+            private enum ParsingExceptionType : int
+            {
+                Unknown = 0,
+                InvalidSpacing = 1,
+                MultipleOperators = 2
+            }
+
+            // check for operators at beginning and end of text without other values around it
+            // check for blank parens like () or []
+
+            private class EquationTextValidator
+            {
+                private EquationMemberGroup members;
+                private List<EquationValidationErrorInfo> errors;
+                private string text;
+                private object target;
+
+                public EquationTextValidator(EquationMemberGroup members)
+                {
+                    this.members = members;
+                }
+
+                public void Validate(object target)
+                {
+                    if (target is Constant)
+                    {
+                        var constant = (Constant)target;
+                        if (constant.IsNumber) return;
+                        this.text = constant.Value;
+                    }
+                    else if (target is Equation)
+                    {
+                        this.text = ((Equation)target).Text;
+                    }
+
+                    this.target = target;
+                    this.errors = new List<EquationValidationErrorInfo>();
+
+                    ValidateSpaces();
+                    ValidateOperators();
+                    CheckForSuccessiveDecimalPoints();
+                    CheckForNumbersWithMultipleDecimalPlaces();
+                    CheckForNumbersThatAreTooLarge();
+                    CheckForEmptySubExpressions();
+                    if (this.errors.Count > 0)
+                    {
+                        var error = new EquationValidationException();
+                        error.Data.Add("Errors", errors);
+                        throw error;
+                    }
+                }
+
+                private void CheckForEmptySubExpressions()
+                {
+                    var delimiters = this.members.SubExpressionDelimiters;
+                    foreach (var delimiter in delimiters)
+                    {
+                        string delimiterPattern = Regex.Escape(delimiter.Left) + @"\s*\.*\s*" + Regex.Escape(delimiter.Right);
+                        var matches = Regex.Matches(text, delimiterPattern);
+                        foreach (Match match in matches)
+                        {
+                            errors.Add(new EquationValidationErrorInfo(EquationValidationErrorType.EmptySubExpression, this.target, match.Index, match.Value));
+                        }
+                    } 
+                }
+
+                private void CheckForSuccessiveDecimalPoints()
+                {
+                    string duplicateDecimalPattern = @"\.+\s*\.+";
+                    var matches = Regex.Matches(text, duplicateDecimalPattern);
+                    foreach (Match match in matches)
+                    {
+                        errors.Add(new EquationValidationErrorInfo(EquationValidationErrorType.TooManyDecimalPlaces, this.target, match.Index, match.Value));
+                    }
+                }
+
+                private void CheckForNumbersWithMultipleDecimalPlaces()
+                {
+                    string numberPattern = @"\d*(\.+\d+\.+)+(\d+\.*)*";
+                    var matches = Regex.Matches(text, numberPattern);
+                    foreach (Match match in matches)
+                    {
+                        errors.Add(new EquationValidationErrorInfo(EquationValidationErrorType.TooManyDecimalPlaces, this.target, match.Index, match.Value));
+                    }
+                }
+
+                private void CheckForNumbersThatAreTooLarge()
+                {
+                    string numberPattern = @"\d+(?:\.{1}\d+)?";
+                    var matches = Regex.Matches(text, numberPattern);
+                    foreach (Match match in matches)
+                    {
+                        double d;
+                        if (!Double.TryParse(match.Value, out d))
+                        {
+                            errors.Add(new EquationValidationErrorInfo(EquationValidationErrorType.NumberTooLarge, this.target, match.Index, match.Value));
+                        }
+                    }
+                }
+
+                private void ValidateOperators()
+                {
+                    string operatorPattern = @"(\s*(" + members.Operators.GetRegexPattern() + @")\s*){2,}";
+                    //string operatorPattern = @"\s(?=" + members.Operators.GetRegexPattern() + @"){2,}";
+                    string doubleNegative = Operator.Subtraction.Shorthand + Operator.Subtraction.Shorthand;
+                    string plusMinus = Operator.Addition.Shorthand + Operator.Subtraction.Shorthand;
+                    var matches = Regex.Matches(text, operatorPattern);
+                    foreach (Match match in matches)
+                    {
+                        string matchTrimmed = match.Value.Replace(" ", string.Empty);
+                        int length = Operator.Subtraction.Shorthand.Length;
+                        if (matchTrimmed.Length > length && matchTrimmed.EndsWith(Operator.Subtraction.Shorthand))
+                        {
+                            string remainderString = matchTrimmed.Substring(0, matchTrimmed.Length - length);
+                            bool isSingleOperator = this.members.Operators.FirstOrDefault(op => string.Equals(op.Shorthand, remainderString)) != null;
+                            if (isSingleOperator)
+                            {
+                                continue;
+                            }
+                        }
+                        errors.Add(new EquationValidationErrorInfo(EquationValidationErrorType.MultipleSequentialOperators, this.target, match.Index, match.Value));
+                    }
+                }
+
+                private void ValidateSpaces()
+                {
+                    string pattern = @"\S\s+\S";
+                    string operatorPattern = members.Operators.GetRegexPattern();
+                    var matches = Regex.Matches(text, pattern, RegexOptions.IgnoreCase);
+                    foreach (Match match in matches)
+                    {
+                        bool containsOperator = Regex.IsMatch(match.Value, operatorPattern);
+                        if (!containsOperator)
+                        {
+                            errors.Add(new EquationValidationErrorInfo(EquationValidationErrorType.InvalidSpacing, this.target, match.Index, match.Value));
+                        }
+                    }
+                }
+            }
+
+            public override Delegate Parse(Equation equation, EquationMemberGroup members = null)
+            {
+                if (members == null)
+                {
+                    members = CS.DefaultMemberGroup;
+                }
+
+                CS.Log.TraceInformation("Validating equation " + equation.Text.ToString());
+                ValidateEquation(equation, members);
+
+                CS.Log.TraceInformation("Parsing equation " + equation.Text.ToString());
+                _InternalData data = new _InternalData(equation, members);
+
+                data.Text = data.Text.Replace(" ", string.Empty);
+                GetFunctionList(data);
+                FixConstants(data);
+                data.Text = data.Formatter.FormatText(data.Equation, data.Text);
 
                 EvaluateSubExpressions(data);
 
-                Expression finalExpression = ParseSubExpression(data, data.Text);
+                var finalExpression = ParseSubExpression(data, data.Text);
                 LambdaExpression lambdaExpression = null;
 
                 // Adds about .04 ms to add variable declarations in
@@ -579,6 +1152,29 @@ namespace Calculator
                 return compiledDelegate;
             }
 
+            public override void Validate(Equation equation, EquationMemberGroup members = null)
+            {
+                if (members == null)
+                {
+                    members = CS.DefaultMemberGroup;
+                }
+
+                ValidateEquation(equation, members);
+            }
+
+            private void ValidateEquation(Equation equation, EquationMemberGroup members)
+            {
+                var validator = new EquationTextValidator(members);
+                validator.Validate(equation);
+                if (equation.Constants.Count() > 0)
+                {
+                    foreach (var constant in equation.Constants)
+                    {
+                        validator.Validate(constant);
+                    }
+                }
+            }
+
             private void GetFunctionList(_InternalData data)
             {
                 foreach (Function f in data.Functions)
@@ -592,40 +1188,23 @@ namespace Calculator
                 }
             }
 
-            private bool IsValueADelimiter(string text, int index, int delimiterType = 0)
+            private bool IsValueADelimiter(_InternalData data, string text, int index, bool checkLeftDelimiter = true)
             {
-                int count = subExpressionDelimiters.GetUpperBound(0) + 1;
                 string subText = (index == 0) ? text : text.Substring(index);
-                for (int i = 0; i < count; i++)
+                foreach (var delimiter in data.Members.SubExpressionDelimiters)
                 {
-                    if (subText.StartsWith(subExpressionDelimiters[i, delimiterType])) return true;
+                    if (subText.StartsWith(delimiter[checkLeftDelimiter])) return true;
                 }
                 return false;
             }
 
-            private class SubExpressionIndex
-            {
-                public int X { get; set; }
-                public int Y { get; set; }
-                public string Left { get; set; }
-                public string Right { get; set; }
-
-                public SubExpressionIndex(int x, int y, string left, string right)
-                {
-                    this.X = x;
-                    this.Y = y;
-                    this.Left = left;
-                    this.Right = right;
-                }
-            }
-
-            private void PopulateSubExpressionList(string equation, string left, string right, List<List<SubExpressionIndex>> list)
+            private void PopulateSubExpressionList(string equation, SubExpressionDelimiter delimiter, List<List<SubExpressionIndex>> list)
             {
                 int previousIndex = 0, depth = 0;
                 for (; ; )
                 {
-                    int leftIndex = equation.IndexOf(left, previousIndex);
-                    int rightIndex = equation.IndexOf(right, previousIndex);
+                    int leftIndex = equation.IndexOf(delimiter.Left, previousIndex);
+                    int rightIndex = equation.IndexOf(delimiter.Right, previousIndex);
                     if (leftIndex == -1 && rightIndex == -1) break;
                     int newIndex = 0;
                     if (leftIndex < rightIndex && leftIndex != -1)
@@ -633,7 +1212,7 @@ namespace Calculator
                         newIndex = leftIndex;
                         if (list.Count == depth) list.Add(new List<SubExpressionIndex>());
 
-                        list[depth].Add(new SubExpressionIndex(newIndex, -1, left, right));
+                        list[depth].Add(new SubExpressionIndex(newIndex, -1, delimiter.Left, delimiter.Right));
                         depth++;
                     }
                     else if (rightIndex < leftIndex || (rightIndex != -1 && leftIndex == -1))
@@ -655,11 +1234,10 @@ namespace Calculator
 
             private void EvaluateSubExpressions(_InternalData data)
             {
-                int count = subExpressionDelimiters.GetUpperBound(0) + 1;
                 string name = "";
                 var list = new List<List<SubExpressionIndex>>();
-                for (int i = 0; i < count; i++)
-                    PopulateSubExpressionList(data.Text, subExpressionDelimiters[i, 0], subExpressionDelimiters[i, 1], list);
+                foreach (var delimiter in data.Members.SubExpressionDelimiters)
+                    PopulateSubExpressionList(data.Text, delimiter, list);
 
 
                 for (int i = list.Count - 1; i > -1; i--)
@@ -676,14 +1254,11 @@ namespace Calculator
                         string equationFragment = data.Text.Substring(subExpression.X + leftLength,
                                                                         difference);
                         var function = GetAttachedFunction(data, subExpression.X);
-
                         Expression expr = null;
-
 
                         if (function != null)
                         {
                             string[] argumentFragments = equationFragment.Split(new char[] { ',' });
-
                             if (argumentFragments.Count() != function.ArgumentCount) throw new Exception(""); ////
 
                             Expression[] functionArguments = new Expression[argumentFragments.Count()];
@@ -699,9 +1274,10 @@ namespace Calculator
                         {
                             expr = ParseSubExpression(data, equationFragment);
                         }
+
                         name = data.RegisterExpression(expr);
                         difference += leftLength + rightLength;
-                        data.Text = data.UpdateEquationText(leftIndex, difference, name);
+                        data.Text = data.Text.InsertReplace(leftIndex, difference, name);
                         UpdateList(list, leftIndex, difference - name.Length, i);
                     }
                 }
@@ -741,108 +1317,6 @@ namespace Calculator
                 }
             }
 
-            private class _InternalData
-            {
-                public const string ExpressionPrefix = "$val";
-                public const char FunctionDelimiter = '$';
-                public int FunctionLength { get { return 5; } }
-                public int ValueLength { get { return 5; } }
-                public string CurrentExpression { get { return FunctionDelimiter + currentExpression.ToString("000") + FunctionDelimiter; } }
-                public Equation Equation { get; set; }
-                public EquationMember[] Members { get; set; }
-                public ParameterExpression[] Variables { get; set; }
-                public List<Operator>[] Operators { get; set; }
-                public Constant[] Constants { get; set; }
-                public Function[] Functions { get; set; }
-                public string Text { get; set; }
-                public Dictionary<string, Expression> SubExpressions { get; set; }
-                public Dictionary<string, Function> UsedFunctions { get; set; }
-                public EquationTextFormatter Formatter { get; set; }
-                public List<Tuple<ParameterExpression, Expression>> ConstantExpressions { get; set; }
-
-                public void RegisterFunction(Function function, int startIndex)
-                {
-                    currentExpression++;
-                    string name = FunctionDelimiter + currentExpression.ToString("000") + FunctionDelimiter;
-                    this.Text = this.Text.Remove(startIndex, function.Shorthand.Length);
-                    this.Text = this.Text.Insert(startIndex, name);
-                    UsedFunctions.Add(name, function);
-                }
-
-                public _InternalData(Equation equation, EquationMemberGroup members)
-                {
-                    this.Equation = equation;
-                    this.Members = members.Members.ToArray();
-                    this.Functions = (from f in members.Members.OfType<Function>()
-                                      orderby f.Shorthand.Length descending
-                                      select f).ToArray();
-                    this.Operators = (from o in this.Members.OfType<Operator>()
-                                      group o by o.Order into oGroup
-                                      orderby oGroup.Key descending
-                                      select new List<Operator>(from g in oGroup select g)).ToArray();
-                    this.Constants = equation.Constants.OrderByDescending(x => x.Shorthand.Length).ToArray();
-                    this.Variables = equation.Variables.Select(v => Expression.Parameter(typeof(double), v.Shorthand)).ToArray();
-                    this.Text = equation.Text;
-                    this.SubExpressions = new Dictionary<string, Expression>();
-                    this.UsedFunctions = new Dictionary<string, Function>();
-                    this.ConstantExpressions = new List<Tuple<ParameterExpression, Expression>>();
-                    this.Formatter = new EquationTextFormatter(this);
-                }
-
-                private int currentExpression = -1;
-                public string RegisterExpression(Expression exp)
-                {
-                    currentExpression++;
-                    string name = CurrentExpression;
-                    SubExpressions.Add(name, exp);
-                    return name;
-                }
-
-                public string UpdateEquationText(int insertionIndex, int deletionLength, string text)
-                {
-                    this.Text = this.Text.Remove(insertionIndex, deletionLength);
-                    this.Text = this.Text.Insert(insertionIndex, text);
-
-                    return this.Text;
-                }
-            }
-
-            [DebuggerDisplay("{Index}, {Length}:  {Value}")]
-            private class MatchInfo
-            {
-                public int Index { get; set; }
-                public int Length { get; set; }
-                public string Value { get; set; }
-
-                public static MatchInfo FromMatch(Match match)
-                {
-                    MatchInfo matchInfo = new MatchInfo()
-                    {
-                        Index = match.Index,
-                        Length = match.Length,
-                        Value = match.Value
-                    };
-                    return matchInfo;
-                }
-
-                public MatchInfo()
-                {
-                }
-
-                public MatchInfo(int index, int length, string value)
-                {
-                    this.Index = index;
-                    this.Length = length;
-                    this.Value = value;
-                }
-            }
-
-            private class OperatorIndexListing
-            {
-                public int Index { get; set; }
-                public Operator Operator { get; set; }
-            }
-
             private List<OperatorIndexListing> GetIndexesOfOperators(string text, List<Operator> operators)
             {
                 List<OperatorIndexListing> indexes = new List<OperatorIndexListing>();
@@ -862,7 +1336,6 @@ namespace Calculator
                 //indexes.Reverse();
                 return indexes;
             }
-
 
             private string FixString(_InternalData data, string equationFragment)
             {
@@ -1006,10 +1479,12 @@ namespace Calculator
                 {
                     return Expression.Constant(d);
                 }
+
                 if (match.Value.StartsWith("$"))
                 {
                     return data.SubExpressions[match.Value];
                 }
+
                 string matchText = match.Value.ToUpper();
                 foreach (var v in data.Variables)
                 {
@@ -1018,6 +1493,7 @@ namespace Calculator
                         return v;
                     }
                 }
+
                 return null;
             }
 
@@ -1052,13 +1528,13 @@ namespace Calculator
 
             private string EvaluateConstantValue(_InternalData data, Constant constant)
             {
-                if (constant.IsConstantValue)
+                if (constant.IsNumber)
                 {
                     return constant.Value;
                 }
                 else
                 {
-                    string formattedValue = data.Formatter.FormatText(constant.Value);
+                    string formattedValue = data.Formatter.FormatText(constant, constant.Value);
                     var expression = ParseSubExpression(data, formattedValue);
                     var variableExpression = Expression.Variable(typeof(double), constant.Shorthand);
                     var assignmentExpression = Expression.Assign(variableExpression, expression);
@@ -1070,7 +1546,7 @@ namespace Calculator
                 }
             }
 
-            private void FixConstants2(_InternalData data)
+            private void FixConstants(_InternalData data)
             {
                 foreach (Constant c in data.Constants)
                 {
@@ -1109,7 +1585,7 @@ namespace Calculator
                             if (rightIndex < data.Text.Length)
                             {
                                 char charRight = data.Text[rightIndex];
-                                if (char.IsLetterOrDigit(charRight) || charRight == _InternalData.FunctionDelimiter || IsValueADelimiter(data.Text, rightIndex, 0))
+                                if (char.IsLetterOrDigit(charRight) || charRight == _InternalData.FunctionDelimiter || charRight == '.' || IsValueADelimiter(data, data.Text, rightIndex, true))
                                 {
                                     replacementString.Append(Operator.Multiplication.Shorthand);
                                 }
@@ -1125,5 +1601,75 @@ namespace Calculator
         }
     }
 
+    [DebuggerDisplay("{Index}, {Length}:  {Value}"), Serializable]
+    internal class MatchInfo
+    {
+        public int Index { get; set; }
+        public int Length { get; set; }
+        public string Value { get; set; }
 
+        public static MatchInfo FromMatch(Match match)
+        {
+            MatchInfo matchInfo = new MatchInfo()
+            {
+                Index = match.Index,
+                Length = match.Length,
+                Value = match.Value
+            };
+            return matchInfo;
+        }
+
+        public MatchInfo()
+        {
+        }
+
+        public MatchInfo(int index, int length, string value)
+        {
+            this.Index = index;
+            this.Length = length;
+            this.Value = value;
+        }
+    }
+
+
+    internal static class CalculatorExtensions
+    {
+        internal static string GetRegexPattern(this IEnumerable<SubExpressionDelimiter> @this, bool leftDelimiter)
+        {
+            if (@this == null) return string.Empty;
+
+            var builder = new StringBuilder();
+
+            foreach (var member in @this)
+            {
+                builder.Append(Regex.Escape(member[leftDelimiter]));
+                builder.Append('|');
+            }
+
+            int builderLength = builder.Length;
+            if (builderLength > 0)
+                builder.Remove(builderLength - 1, 1);
+
+            return builder.ToString();
+        }
+
+        internal static string GetRegexPattern(this IEnumerable<EquationMember> @this)
+        {
+            if (@this == null) return string.Empty;
+
+            var builder = new StringBuilder();
+
+            foreach (var member in @this)
+            {
+                builder.Append(Regex.Escape(member.Shorthand));
+                builder.Append('|');
+            }
+
+            int builderLength = builder.Length;
+            if (builderLength > 0)
+                builder.Remove(builderLength - 1, 1);
+
+            return builder.ToString();
+        }
+    }
 }
