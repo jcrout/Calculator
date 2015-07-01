@@ -32,11 +32,13 @@ using System.Diagnostics.CodeAnalysis;
 namespace Calculator
 {
     using System;
+    using System.Collections;
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Diagnostics.CodeAnalysis;
     using System.Drawing;
     using System.Linq;
+    using System.Runtime.InteropServices;
     using System.Text;
     using System.Threading;
     using System.Threading.Tasks;
@@ -44,97 +46,408 @@ namespace Calculator
     using JonUtility;
     using U = JonUtility.Utility;
     using CS = CalculatorSettings;
-    using System.Collections;
 
-    public enum GraphMode : int
+    public interface ICalculatorControl
     {
-        Function = 0
-    }
-
-    [DebuggerDisplay("{x}, {y}")]
-    public struct PointD
-    {
-        private double x;
-        private double y;
-
-        public PointD(double x, double y)
-        {
-            this.x = x;
-            this.y = y;
-        }
-
-        public double X
-        {
-            get
-            {
-                return this.x;
-            }
-        }
-
-        public double Y
-        {
-            get
-            {
-                return this.y;
-            }
-        }
-
-        public override string ToString()
-        {
-            return this.x.ToString() + "," + this.y.ToString();
-        }
-    }
-
-    public abstract class EquationBoxBase
-    {
-        private RichTextBox equationTextBox;
-
-        public RichTextBox EquationTextBox
-        {
-            get
-            {
-                return this.equationTextBox;
-            }
-
-            set
-            {
-                this.equationTextBox = value;
-            }
-        }
-
-        public virtual string Variable
-        {
-            get
-            {
-                return "X";
-            }
-        }
-
-        public virtual string Text
-        {
-            get
-            {
-                return this.equationTextBox.Text;
-            }
-
-            set
-            {
-                this.equationTextBox.Text = value;
-            }
-        }
-
-        public virtual bool HasEquation
-        {
-            get
-            {
-                return !string.IsNullOrEmpty(this.equationTextBox.Text);
-            }
-        }
+        Size DefaultSize { get; }
     }
 
     // Holds one or more EquationBox instances, with a + button to allow adding more equations
-    public class EquationPanel : Panel
+    public abstract class EquationBoxContainerBase : Panel
     {
+        public abstract IEnumerable<EquationBoxBase> EquationBoxes { get; }
+
+        public abstract IEnumerable<Equation> GetEquations();
+
+        public abstract bool EnableAddingEquationBoxes { get; }
+
+        public abstract CloseBoxMode CloseBoxMode { get; }
+
+    }
+
+    public class EquationBoxContainer : EquationBoxContainerBase
+    {
+        private const int bufferLeft = 5;
+        private const int bufferRight = 5;
+        private const int bufferTop = 5;
+        private const int bufferBoxSpacing = 3;
+        private const int bufferCloseBoxSpacing = 5;
+
+        private static int minimumBoxes = 3;
+        private static Size closeBoxSize;
+
+        private List<EquationBoxBase> equationBoxes;
+        private List<CloseBoxBase> closeBoxes;
+        private bool addEquationBoxEnabled = true;
+        private CloseBoxMode closeBoxMode = CloseBoxMode.Close | CloseBoxMode.SingleBoxClear;
+        private string closeBoxText = "X";
+
+        static EquationBoxContainer()
+        {
+            SetCloseBoxSize();
+        }
+
+        private static void SetCloseBoxSize()
+        {
+            var temp = CloseBoxBase.Create();
+            var tempEquationBox = EquationBoxBase.Create();
+            int width = temp.Width, height = temp.Height;
+
+            if (temp.Width < 3 || temp.Width > 22)
+            {
+                width = 22;
+            }
+
+            if (temp.Height < 3 || temp.Height > 22)
+            {
+                height = 22;
+            }
+
+            closeBoxSize = new Size(width, height);
+        }
+
+        public EquationBoxContainer()
+        {
+            this.AutoScroll = true;
+            this.AutoScrollMargin = new Size(bufferLeft, bufferTop);
+            this.AutoSize = false;
+            this.equationBoxes = new List<EquationBoxBase>();
+            this.closeBoxes = new List<CloseBoxBase>();
+
+            this.AddBoxes(minimumBoxes);
+        }
+
+        public override IEnumerable<EquationBoxBase> EquationBoxes
+        {
+            get { return this.equationBoxes; }
+        }
+
+        public override IEnumerable<Equation> GetEquations()
+        {
+            int count = this.equationBoxes.Count;
+            var equations = new List<Equation>();
+            for (int i = 0; i < count; i++)
+            {
+                var box = this.equationBoxes[i];
+                var equation = box.GetEquation();
+                if (equation == null || ReferenceEquals(equation, Equation.Empty) || equation.Text == string.Empty)
+                {
+                    continue;
+                }
+
+                equations.Add(equation);
+            }
+
+            return equations;
+        }
+
+        public override bool EnableAddingEquationBoxes
+        {
+            get { return this.addEquationBoxEnabled; }
+        }
+
+        private void AddBoxes(int count = 1)
+        {
+            this.SuspendLayout();
+
+            for (int i = 0; i < count; i++)
+            {
+                var box = EquationBoxBase.Create();
+                box.Parent = this;
+                box.Left = bufferLeft;
+                box.Top = GetBoxTop();
+                box.Width = GetBoxWidth();
+                box.Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top;
+                box.Index = this.equationBoxes.Count;
+                box.HasEquationChanged += box_HasEquationChanged;
+                box.SizeChanged += box_SizeChanged;
+
+                this.equationBoxes.Add(box);
+            }
+
+            this.UpdateCloseBoxes();
+            this.FormatControlPositions();
+
+            this.ResumeLayout(true);
+        }
+
+        private void UpdateCloseBoxes()
+        {
+            if (this.closeBoxMode.HasFlag(CloseBoxMode.Disabled))
+            {
+                return;
+            }
+
+            int count = this.equationBoxes.Count;
+            if (count == 1)
+            {
+                ClearAllCloseBoxes();
+                return;
+            }
+
+
+            int closeBoxCount = this.closeBoxes.Count;
+            if (closeBoxCount < count)
+            {
+                for (int i = closeBoxCount; i < count; i++)
+                {
+                    var newBox = CloseBoxBase.Create();
+                    newBox.Text = closeBoxText;
+                    newBox.Size = closeBoxSize;
+                    newBox.Parent = this;
+                    if (i == 0)
+                    {
+                        newBox.Top = bufferTop;
+                    }
+                    newBox.Closing += closeBox_Closing;
+                    closeBoxes.Add(newBox);
+                }
+            }
+        }
+
+        private void closeBox_Closing(object sender, EventArgs e)
+        {
+            var closeBox = (CloseBoxBase)sender;
+            int index = this.closeBoxes.IndexOf(closeBox);
+
+            this.SuspendLayout();
+
+            this.RemoveBox(index);
+            this.FormatControlPositions();
+
+            this.ResumeLayout(true);
+        }
+
+        private void RemoveBox(int index)
+        {
+            RemoveBoxes(new List<int>(1) { index });
+        }
+
+        private void RemoveBoxes(List<int> indexes)
+        {
+            if (indexes == null)
+            {
+                return;
+            }
+
+            int count = indexes.Count;
+            if (count == 0)
+            {
+                return;
+            }
+            else if (count > 1)
+            {
+                indexes.Sort();
+                indexes.Reverse();
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                int index = indexes[i];
+                _RemoveCloseBox(index);
+                _RemoveEquationBox(index);
+            }
+
+            if (equationBoxes.Count == 1)
+            {
+                _RemoveCloseBox(0);
+            }
+        }
+
+        private void _RemoveEquationBox(int index)
+        {
+            var equationBox = this.equationBoxes[index];
+            this.equationBoxes.RemoveAt(index);
+            this.Controls.Remove(equationBox);
+        }
+
+        private void _RemoveCloseBox(int index)
+        {
+            var closeBox = this.closeBoxes[index];
+            closeBox.Click -= closeBox_Closing;
+            this.closeBoxes.RemoveAt(index);
+            this.Controls.Remove(closeBox);
+        }
+
+        private void ClearAllCloseBoxes()
+        {
+            foreach (var closeBox in this.closeBoxes)
+            {
+                closeBox.Parent = null;
+                closeBox.Dispose();
+            }
+        }
+
+        private void box_HasEquationChanged(object sender, EventArgs e)
+        {
+            var box = (EquationBoxBase)sender;
+            int index = this.equationBoxes.IndexOf(box);
+            if (box.HasEquation && index == this.equationBoxes.Count - 1)
+            {
+                this.AddBoxes(1);
+            }
+        }
+
+        private void box_SizeChanged(object sender, EventArgs e)
+        {
+            this.SuspendLayout();
+            this.FormatControlPositions();
+            this.ResumeLayout(true);
+        }
+
+        private int GetBoxTop()
+        {
+            if (this.equationBoxes.Count == 0)
+            {
+                return bufferTop;
+            }
+
+            int height = this.equationBoxes[this.equationBoxes.Count - 1].Bottom + bufferBoxSpacing;
+            return height;
+        }
+
+        private int GetBoxWidth()
+        {
+            int baseWidth = this.ClientSize.Width - bufferLeft - bufferRight;
+            return baseWidth - (this.closeBoxMode.HasFlag(CloseBoxMode.Disabled)
+                ? closeBoxSize.Width + bufferCloseBoxSpacing
+                : 0);
+        }
+
+        private int GetCloseBoxLeft()
+        {
+            if (this.closeBoxMode.HasFlag(CloseBoxMode.Disabled))
+            {
+                return this.ClientSize.Width - bufferRight - closeBoxSize.Width;
+            }
+            else
+            {
+                return this.ClientSize.Width;
+            }
+        }
+
+        private void UpdateCloseBox(int index)
+        {
+
+        }
+
+        protected virtual void FormatControlPositions()
+        {
+            int scrollOffset = this.AutoScrollPosition.Y;
+            int width = this.GetBoxWidth();
+            int closeBoxLeft = this.GetCloseBoxLeft();
+
+            for (int i = 0; i < this.equationBoxes.Count; i++)
+            {
+                var equationBox = this.equationBoxes[i];
+                var closeBox = (i < this.closeBoxes.Count) ? this.closeBoxes[i] : null;
+
+                if (equationBox.Index != i)
+                {
+                    equationBox.Index = i;
+                }
+
+                if (equationBox.Width != width)
+                {
+                    equationBox.Width = width;
+                }
+
+                if (closeBox != null && closeBox.Left != closeBoxLeft)
+                {
+                    closeBox.Left = closeBoxLeft;
+                }
+
+                int top = 0;
+                if (i > 0)
+                {
+                    top = this.equationBoxes[i - 1].Bottom + bufferBoxSpacing;
+                }
+                else
+                {
+                    top = bufferTop + scrollOffset;
+                }
+
+                if (equationBox.Top != top)
+                {
+                    equationBox.Top = top;
+                }
+
+                if (closeBox != null && closeBox.Top != top)
+                {
+                    closeBox.Top = top;
+                }
+            }
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            this.SuspendLayout();
+            this.FormatControlPositions();
+            this.ResumeLayout(true);
+
+            base.OnSizeChanged(e);
+        }
+
+        public override CloseBoxMode CloseBoxMode
+        {
+            get { throw new NotImplementedException(); }
+        }
+    }
+
+    public abstract class CloseBoxBase : Panel
+    {
+        public abstract event EventHandler Closing;
+
+        public static CloseBoxBase Create()
+        {
+            return new CloseBox();
+        }
+
+        public CloseBoxBase()
+        {
+
+        }
+    }
+
+    public class CloseBox : CloseBoxBase
+    {
+        public override event EventHandler Closing;
+
+        private Button closeButton;
+        private string buttonText = "X";
+
+        public CloseBox()
+        {
+            this.SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.UserPaint, true);
+            this.BorderStyle = System.Windows.Forms.BorderStyle.None;
+
+            this.BackColor = Color.Transparent;
+            this.closeButton = new Button();
+            this.closeButton.Text = this.buttonText;
+            this.closeButton.Location = new Point(0, 0);
+            this.closeButton.FlatStyle = FlatStyle.Flat;
+            this.closeButton.Parent = this;
+            this.closeButton.Click += closeButton_Click;
+        }
+
+        void closeButton_Click(object sender, EventArgs e)
+        {
+            this.Closing.SafeRaise(this);
+        }
+
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            this.closeButton.Size = this.ClientSize;
+            base.OnSizeChanged(e);
+        }
+    }
+
+    [Flags]
+    public enum CloseBoxMode : int
+    {
+        Disabled = 0,
+        Close = 1,
+        SingleBoxClear = 2
     }
 
     public class CalculatorForm : Form
@@ -152,6 +465,7 @@ namespace Calculator
         protected override void OnLoad(EventArgs e)
         {
             this.CenterForm(500, 500);
+            this.calculatorPanel.TEMP_SETANCHOR();
             base.OnLoad(e);
         }
     }
@@ -159,56 +473,45 @@ namespace Calculator
     public class CalculatorPanel : Panel
     {
         private GraphBox graphBox;
+        private EquationBoxContainerBase container;
 
         public CalculatorPanel()
             : this(null, 0, 0, 300, 200)
         {
         }
 
+        public void TEMP_SETANCHOR()
+        {
+            this.container.Anchor = AnchorStyles.Left | AnchorStyles.Bottom | AnchorStyles.Top | AnchorStyles.Right;
+        }
+
         public CalculatorPanel(Control parent, int left, int top, int width, int height)
         {
             this.Parent = parent;
             this.SetBounds(left, top, width, height);
-            this.graphBox = U.NewControl<GraphBox>(this, string.Empty, 25, 25, 301, 301);
-            var btn = U.NewControl<Button>(this, "lol", 0, 0, 80, 22);
+            this.container = U.NewControl<EquationBoxContainer>(this, string.Empty, 25, 25, 300, 150);
+            this.container.BorderStyle = BorderStyle.FixedSingle;
+
+            this.graphBox = U.NewControl<GraphBox>(this, string.Empty, 25, this.container.Bottom + 5, 301, 301);
+            var btn = U.NewControl<Button>(this, "Graph", 0, 0, 80, 22);
 
             btn.Click += (sender, e) =>
             {
-                double randDouble = JonUtility.Diagnostics.GetRandomDouble(4);
-                Constant[] constants = new Constant[3];
-                constants[0] = new Constant("A", "55.7");
-                constants[1] = new Constant("B", "3)");
-                constants[2] = new Constant("C", "33.21");
-                Equation[] equations = new Equation[1];
-                var builder = new StringBuilder();
-                for (int i = 0; i < 5; i++)
+                var equations = this.container.GetEquations();
+                int count = equations.Count();
+                if (count > 0)
                 {
-                    builder.Append(JonUtility.Diagnostics.GetRandomNumber(0, 10));
-                }
-                //equations[0] = Equation.Create(@"  2.2.2 + .53.4 - .33.333.333.55.3. + 3.24.52.35 .57X.6  x^2 - -1   5* ***6 + 2.22 - " + builder.ToString(), constants);
-                //equations[0] = Equation.Create(randDouble.ToString() + @"x^2 3 -   4 (2 x * -5 / 0)", constants);
-                //equations[0] = Equation.Create(randDouble.ToString() + @"x^2 - .25x^3 + max(x, 3) - -2", constants);
-                //equations[1] = Equation.Create(@"3log10(" + randDouble.ToString() + "X)", constants);
-                //equations[0] = Equation.Create(@".6023x^4 - x^3 + x^2 - x + 1", constants);
-                //equations[0] = Equation.Create(@"xround(.2555555X^2,2) - 2", constants);
-                //equations[0] = Equation.Create(@".5B.5BX5.5 + 1.(X/B)X5.2max(5,x(3max(4,5)XX))3", constants);
-                equations[0] = Equation.Create(@"5..3X(.X(+23max(..,3)))", constants);
-                //equations[4] = Equation.Create(randDouble.ToString() + @"X", constants);
-                Delegate[] delegates = null;
-                try
-                {
-                    delegates = equations.Select(eq => EquationParser.ParseEquation(eq, null)).ToArray();
-                }
-                catch (AggregateException ex)
-                {
-                    var exceptions = ex.Flatten().InnerExceptions;
-                    foreach (ParsingException exception in exceptions)
+                    try
                     {
-                        Console.WriteLine(exception.ParsingErrorMessage);
+                        var delegates = equations.Select(eq => EquationParser.ParseEquation(eq));
+                        this.graphBox.Graph(delegates);
                     }
-                    throw;
+                    catch (EquationValidationException ex)
+                    {                        
+                        throw;
+                    }
+         
                 }
-                this.graphBox.Graph(delegates);
             };
             var btn2 = U.NewControl<Button>(this, "Clear", btn.Right + 10, 0, 80, 22);
             btn2.Click += (sender, e) =>
@@ -218,393 +521,37 @@ namespace Calculator
         }
     }
 
-    public class GraphData
+
+    /// <summary>
+    /// This class functions similar to a label, having no caret shown, but allows the kind of specially-formatted text that you normally would use a RichTextBox to display.
+    /// </summary>
+    internal class UnselectableRichTextBox : RichTextBox
     {
-        private Delegate function;
-        private PointD[] points;
+        [DllImport("user32.dll", EntryPoint = "HideCaret")]
 
-        internal GraphData(Delegate function, PointD[] points)
+        public static extern long HideCaret(IntPtr hwnd);
+
+        public UnselectableRichTextBox()
         {
-            this.function = function;
-            this.points = points;
+            this.ReadOnly = true;
+            this.ScrollBars = RichTextBoxScrollBars.None;
+            this.BorderStyle = System.Windows.Forms.BorderStyle.None;
         }
 
-        private GraphData()
+        protected override void WndProc(ref Message m)
         {
+            base.WndProc(ref m);
+            HideCaret(this.Handle);
         }
 
-        public Delegate Function
+        protected override void OnGotFocus(EventArgs e)
         {
-            get
-            {
-                return this.function;
-            }
-        }
-
-        public PointD[] Points
-        {
-            get
-            {
-                return this.points;
-            }
+            this.Parent.Focus();
         }
     }
 
-    public enum GraphStatus
+    internal class ExpressionRichTextBox : RichTextBox
     {
-        Idle = 0,
-        Drawing = 1
-    }
 
-    public class GraphBox : PictureBox
-    {
-        private GraphSettings settings = new GraphSettings();
-        private Bitmap image;
-        private Graphics graphics;
-        private Pen ticksPen;
-        private Pen axisPen;
-        private Pen graphLinePen;
-        private Point origin;
-        private PointD scaleFactor;
-        private GraphStatus graphStatus = GraphStatus.Idle;
-        private object statusUpdateLock = new object();
-
-        public GraphBox()
-        {
-            this.SizeMode = PictureBoxSizeMode.Normal;
-            this.BackColor = Color.White;
-            this.ticksPen = Pens.DarkRed;
-            this.axisPen = Pens.Black;
-            this.graphLinePen = Pens.Blue;
-        }
-
-        public GraphBox(Control parent, int left, int top, int width, int height)
-            : this()
-        {
-            this.Parent = parent;
-            this.SetBounds(left, top, width, height);
-        }
-
-        public GraphStatus CurrentStatus
-        {
-            get
-            {
-                lock (this.statusUpdateLock)
-                {
-                    return this.graphStatus;
-                }
-            }
-
-            protected set
-            {
-                lock (this.statusUpdateLock)
-                {
-                    this.graphStatus = value;
-                }
-            }
-        }
-
-        public GraphSettings Settings
-        {
-            get
-            {
-                return this.settings;
-            }
-        }
-
-        public void Clear(bool redrawGrid = false)
-        {
-            this.Clear(true, redrawGrid);
-        }
-
-        public void Graph(IEnumerable<Delegate> functions)
-        {
-            // Disallow multiple calls to Graph
-            lock (this.statusUpdateLock)
-            {
-                if (this.graphStatus != GraphStatus.Idle)
-                {
-                    return;
-                }
-                this.graphStatus = GraphStatus.Drawing;
-            }
-
-            this.OnGraph(functions);
-        }
-
-        public void Graph(Delegate function)
-        {
-            this.Graph(new Delegate[1] { function });
-        }
-
-        protected async virtual void OnGraph(IEnumerable<Delegate> functions)
-        {
-            long time1 = 0, time2 = 0;
-            JonUtility.Diagnostics.QueryPerformanceCounter(ref time1);
-
-            this.SetOrigin();
-            this.Clear(false, false);
-
-            var drawBaseGraphTask = Task.Run(() => this.DrawBaseGraph());
-            var tasks = new List<Task>(functions.Count() + 1) { drawBaseGraphTask };
-
-            foreach (Delegate function in functions)
-            {
-                Delegate func = function;
-                var t2 = Task.Run(() => this.GetGraphData(func))
-                    .ContinueWith(f => this.DrawGraphPoints(f.Result.Points));
-                tasks.Add(t2);
-            }
-
-            try
-            {
-                await Task.WhenAll(tasks).ConfigureAwait(false);
-            }
-            catch (AggregateException ex)
-            {
-                CS.Log.TraceError(ex);
-            }
-
-            this.Invoke(new Action(() => { this.Image = this.image; }));
-            this.graphStatus = GraphStatus.Idle;
-
-            JonUtility.Diagnostics.QueryPerformanceCounter(ref time2);
-            this.Parent.Parent.Invoke(new Action(() => this.Parent.Parent.Text = "Time taken: " + U.TicksToMS(time2 - time1, 4)));
-        }
-
-        protected override void OnResize(EventArgs e)
-        {
-            if ((this.ClientSize.Width > 0) && (this.ClientSize.Height > 0))
-            {
-                if (this.graphics == null)
-                {
-                    this.image = new Bitmap(this.ClientSize.Width, this.ClientSize.Height);
-                    this.graphics = Graphics.FromImage(this.image);
-                }
-                else
-                {
-                    lock (this.graphics)
-                    {
-                        this.image = new Bitmap(this.ClientSize.Width, this.ClientSize.Height);
-                        this.graphics = Graphics.FromImage(this.image);
-                    }
-                }
-            }
-            base.OnResize(e);
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (this.graphics != null)
-            {
-                this.graphics.Dispose();
-                this.graphics = null;
-            }
-
-            if (this.image != null)
-            {
-                this.image.Dispose();
-                this.image = null;
-            }
-
-            base.Dispose(disposing);
-        }
-
-        private async void Clear(bool refresh, bool redrawGrid)
-        {
-            lock (this.graphics)
-            {
-                this.graphics.Clear(this.BackColor);
-            }
-
-            if (redrawGrid)
-            {
-                await Task.Run(() => this.DrawBaseGraph());
-            }
-
-            if (refresh)
-            {
-                this.Refresh();
-            }
-        }
-
-        private void SetOrigin()
-        {
-            int originX = 0, originY = 0;
-
-            double rangeTotalX = this.settings.XAxisRange.Y - this.settings.XAxisRange.X;
-            double rangeTotalY = this.settings.YAxisRange.Y - this.settings.YAxisRange.X;
-
-            if (this.settings.XAxisRange.X < 0)
-            {
-                if (this.settings.XAxisRange.Y < 0)
-                {
-                    originX = this.ClientSize.Width;
-                }
-                else
-                {
-                    double offset = Math.Abs(this.settings.XAxisRange.X / rangeTotalX);
-                    originX = (int)(offset * this.ClientSize.Width);
-                }
-            }
-
-            if (this.settings.YAxisRange.X < 0)
-            {
-                if (this.settings.YAxisRange.Y < 0)
-                {
-                    originX = this.ClientSize.Height;
-                }
-                else
-                {
-                    double offset = Math.Abs(this.settings.YAxisRange.Y / rangeTotalY);
-                    originY = (int)(offset * this.ClientSize.Height);
-                }
-            }
-
-            this.scaleFactor = new PointD(this.ClientSize.Width / rangeTotalX, this.ClientSize.Height / rangeTotalY);
-            this.origin = new Point(originX, originY);
-        }
-
-        private void DrawBaseGraph()
-        {
-            int halfLineThickness = (this.settings.LineThickness - 1) / 2;
-            int upperLineX = this.origin.X - halfLineThickness;
-            int upperLineY = this.origin.Y - halfLineThickness;
-
-            if (this.settings.ShowXAxis)
-                for (int i = 0; i < this.settings.LineThickness; i++)
-                    this.DrawLine(this.axisPen, 0, upperLineY + i, this.ClientSize.Width, upperLineY + i);
-            if (this.settings.ShowYAxis)
-                for (int i = 0; i < this.settings.LineThickness; i++)
-                    this.DrawLine(this.axisPen, upperLineX + i, 0, upperLineX + i, this.ClientSize.Height);
-            if (this.settings.ShowTickMarks)
-                this.DrawTickMarks();
-        }
-
-        private void DrawTickMarks()
-        {
-            int tickHalfWidth = ((this.settings.LineThickness - 1) / 2) + this.settings.TickMarkWidth;
-            int tickDistanceX = this.ClientSize.Width / this.settings.XTickMarkCount;
-            int lowerY = this.origin.Y + tickHalfWidth;
-            int upperY = this.origin.Y - tickHalfWidth;
-            int tickOffsetX = this.origin.X % tickDistanceX;
-            for (int tickX = 0, currentX = tickOffsetX; tickX < this.settings.XTickMarkCount + 1; tickX++, currentX += tickDistanceX)
-            {
-                if (currentX == this.origin.X) continue;
-                this.DrawLine(this.ticksPen, currentX, lowerY, currentX, upperY);
-            }
-
-            int tickDistanceY = this.ClientSize.Height / this.settings.YTickMarkCount;
-            int lowerX = this.origin.X + tickHalfWidth;
-            int upperX = this.origin.X - tickHalfWidth;
-            int tickOffsetY = this.origin.Y % tickDistanceX;
-            for (int tickY = 0, currentY = tickOffsetY; tickY < this.settings.YTickMarkCount + 1; tickY++, currentY += tickDistanceY)
-            {
-                if (currentY == this.origin.Y) continue;
-                this.DrawLine(this.ticksPen, lowerX, currentY, upperX, currentY);
-            }
-        }
-
-        private GraphData GetGraphData(Delegate function)
-        {
-            var functionToEvaluate = (Func<double, double>)function;
-            int pointCount = this.settings.PointsToGraph;
-            double min = this.settings.XValueRange.X.IsNaNorInfinity() ? this.settings.XAxisRange.X - 1 : this.settings.XValueRange.X;
-            double max = this.settings.XValueRange.Y.IsNaNorInfinity() ? this.settings.XAxisRange.Y + 1 : this.settings.XValueRange.Y;
-            double range = max - min;
-            double increment = range / pointCount;
-
-            var points = new PointD[pointCount];
-            double valueX = min;
-            for (int i = 0; i < pointCount; i++)
-            {
-                double valueY = functionToEvaluate(valueX);
-                points[i] = new PointD(valueX, valueY);
-                valueX += increment;
-            }
-
-            return new GraphData(function, points);
-        }
-
-        private void DrawGraphPoints(PointD[] points)
-        {
-            int pointCount = points.Length;
-            int linesDrawn = 0;
-            for (int i = 1; i < pointCount; i++)
-            {
-                var firstPoint = points[i - 1];
-                var secondPoint = points[i];
-                if (firstPoint.X.IsNaNorInfinity() || firstPoint.Y.IsNaNorInfinity() || secondPoint.X.IsNaNorInfinity() || secondPoint.Y.IsNaNorInfinity())
-                {
-                    continue;
-                }
-
-                int x1 = this.origin.X + (int)(this.scaleFactor.X * firstPoint.X);
-                int y1 = this.origin.Y - (int)(this.scaleFactor.Y * firstPoint.Y);
-                int x2 = this.origin.X + (int)(this.scaleFactor.X * secondPoint.X);
-                int y2 = this.origin.Y - (int)(this.scaleFactor.Y * secondPoint.Y);
-
-                // check to see whether x1,y1 is in bounds, or x2,y2 is in bounds; if either is true, draw the line
-                bool inBounds = ((x1 > -1 && x1 < this.ClientSize.Width) &&
-                                 (y1 > -1 && y1 < this.ClientSize.Height)) ||
-                                 ((x2 > -1 && x2 < this.ClientSize.Width) &&
-                                 (y2 > -1 && y2 < this.ClientSize.Height));
-                if (inBounds)
-                {
-                    this.DrawLine(this.graphLinePen, x1, y1, x2, y2);
-                    linesDrawn++;
-                }
-            }
-        }
-
-        private void DrawLine(Pen pen, int x1, int y1, int x2, int y2)
-        {
-            lock (this.graphics)
-            {
-                this.graphics.DrawLine(pen, x1, y1, x2, y2);
-            }
-        }
-    }
-
-    public class GraphSettings
-    {
-        public GraphSettings()
-        {
-            this.XAxisRange = new PointD(-10f, 10f);
-            this.YAxisRange = new PointD(-10f, 10f);
-            this.XValueRange = new PointD(Double.NaN, Double.NaN);
-            this.PointsToGraph = 400;
-            this.LineThickness = 1;
-            this.XTickMarkCount = 20;
-            this.YTickMarkCount = 20;
-            this.TickMarkWidth = 2;
-            this.ShowTickMarks = true;
-            this.ShowXAxis = true;
-            this.ShowYAxis = true;
-        }
-
-        public PointD XAxisRange { get; set; }
-
-        public PointD YAxisRange { get; set; }
-
-        public PointD XValueRange { get; set; }
-
-        public int PointsToGraph { get; set; }
-
-        public int LineThickness { get; set; }
-
-        public bool ShowTickMarks { get; set; }
-
-        public int TickMarkWidth { get; set; }
-
-        public int XTickMarkCount { get; set; }
-
-        public int YTickMarkCount { get; set; }
-
-        public bool ShowGridLines { get; set; }
-
-        public bool ShowXAxis { get; set; }
-
-        public bool ShowYAxis { get; set; }
     }
 }

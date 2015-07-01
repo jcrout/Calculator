@@ -24,10 +24,17 @@
         private static Dictionary<Type, List<EquationMember>> dict;
         internal static TraceListener traceListener;
         internal static TraceSource Log = new TraceSource("CalculatorSource", SourceLevels.Information);
-        internal static List<Operator> Operators;
-        internal static List<Function> Functions;
-        internal static List<SubExpressionDelimiter> SubExpressionDelimiters;
-        internal static EquationMemberGroup DefaultMemberGroup;
+        //internal static List<Operator> Operators;
+        //internal static List<Function> Functions;
+        //internal static List<SubExpressionDelimiter> SubExpressionDelimiters;
+        private static EquationMemberGroup defaultMemberGroup;
+        internal static EquationMemberGroup DefaultMemberGroup
+        {
+            get
+            {
+                return defaultMemberGroup;
+            }
+        }
 
         static CalculatorSettings()
         {
@@ -36,42 +43,25 @@
             Log.Listeners.Clear();
             Log.Listeners.Add(traceListener);
 
-            Operators = new List<Operator>(Operator.DefaultList);
-            Functions = new List<Function>(Function.DefaultList);
-            SubExpressionDelimiters = new List<SubExpressionDelimiter>(SubExpressionDelimiter.DefaultList);
+            var operators = new List<Operator>(Operator.DefaultList);
+            var functions = new List<Function>(Function.DefaultList);
+            var subExpressionDelimiters = new List<SubExpressionDelimiter>(SubExpressionDelimiter.DefaultList);
 
-            var combinedList = ((IEnumerable<EquationMember>)Operators).Concat(
-                               ((IEnumerable<EquationMember>)Functions)).Concat(
-                               ((IEnumerable<EquationMember>)SubExpressionDelimiters));
+            var combinedList = ((IEnumerable<EquationMember>)operators).Concat(
+                               ((IEnumerable<EquationMember>)functions)).Concat(
+                               ((IEnumerable<EquationMember>)subExpressionDelimiters));
 
-            DefaultMemberGroup = new EquationMemberGroup("Default", combinedList);
+            defaultMemberGroup = new EquationMemberGroup("Default", combinedList);
         }
 
         public static void AddMember(EquationMember member)
         {
-
-        }
-
-        public static void AddOperator(Operator op)
-        {
-            Operator duplicate = Operators.Find(o => o.Shorthand.ToUpper() == op.Shorthand.ToUpper());
-            if (duplicate != null)
+            var memberType = member.GetHighestDerivedType();
+            var duplicate = defaultMemberGroup[memberType].FirstOrDefault(em => string.Equals(em.Shorthand, member.Shorthand, StringComparison.OrdinalIgnoreCase));
+            if (duplicate == null)
             {
-                throw new Exception("Plugin attempted to add a duplicate operator."); ////
+                defaultMemberGroup.Add(member);
             }
-
-            Operators.Add(op);
-        }
-
-        public static void AddFunction(Function function)
-        {
-            Function duplicate = Functions.Find(f => f.Shorthand.ToUpper() == function.Shorthand.ToUpper());
-            if (duplicate != null)
-            {
-                throw new Exception("Plugin attempted to add a duplicate function."); ////
-            }
-
-            Functions.Add(function);
         }
 
         public static void LoadExtension(string filePath)
@@ -95,20 +85,20 @@
             {
                 return;
             }
-            
+
             ICalculatorExtender extension = (ICalculatorExtender)Activator.CreateInstance(extensionManagerType);
             object[] instances = TryGetInstances(extension, filePath);
-          
+
             foreach (object instance in instances)
             {
                 Type instanceType = instance.GetType();
                 if (instanceType.IsSubclassOf(typeof(Operator)))
                 {
-                    AddOperator((Operator)instance);
+                    AddMember((Operator)instance);
                 }
                 else if (instanceType == typeof(Function))
                 {
-                    AddFunction((Function)instance);
+                    AddMember((Function)instance);
                 }
             }
         }
@@ -118,7 +108,7 @@
             try
             {
                 return extension.LoadInstances();
-            }                
+            }
             catch (Exception)
             {
                 FileInfo fileInfo = new FileInfo(filePath);

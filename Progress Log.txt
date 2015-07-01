@@ -31,3 +31,7 @@ Day 5: GraphBox is now threadsafe, and can draw multiple equations at once
        Functions and non-simple Constants are now replaced using $000$ format
 
 Day 6-7: Some equation validation/extension support, not much time spent on this
+
+Day 8-12: Some more equation validation and parsing refactoring
+	  GUI primitives, including EquationBox + Base, EquationBoxContainer + Base, ConstantBox + Base, CloseBox + Base
+	  Can now graph functions from textbox input, though it is in its most basic form

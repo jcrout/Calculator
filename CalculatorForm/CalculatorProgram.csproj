@@ -73,6 +73,10 @@
     <None Include="App.config" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\JonUtility\JonUtility\JonUtility.csproj">
+      <Project>{afcf9d3a-f066-40d7-8518-f57a4b4600bf}</Project>
+      <Name>JonUtility</Name>
+    </ProjectReference>
     <ProjectReference Include="..\Calculator\Calculator.csproj">
       <Project>{97dab0c9-7d3c-453d-9af0-d4077e035c8f}</Project>
       <Name>Calculator</Name>

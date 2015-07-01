@@ -53,6 +53,12 @@
     <Compile Include="Controls.cs">
       <SubType>Component</SubType>
     </Compile>
+    <Compile Include="Controls\EquationBox.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="Controls\GraphBox.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Include="DataTypes.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
