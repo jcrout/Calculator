@@ -24,9 +24,7 @@
         private static Dictionary<Type, List<EquationMember>> dict;
         internal static TraceListener traceListener;
         internal static TraceSource Log = new TraceSource("CalculatorSource", SourceLevels.Information);
-        //internal static List<Operator> Operators;
-        //internal static List<Function> Functions;
-        //internal static List<SubExpressionDelimiter> SubExpressionDelimiters;
+
         private static EquationMemberGroup defaultMemberGroup;
         internal static EquationMemberGroup DefaultMemberGroup
         {
@@ -51,7 +49,7 @@
                                ((IEnumerable<EquationMember>)functions)).Concat(
                                ((IEnumerable<EquationMember>)subExpressionDelimiters));
 
-            defaultMemberGroup = new EquationMemberGroup("Default", combinedList);
+            defaultMemberGroup = new EquationMemberGroup("Default", combinedList);            
         }
 
         public static void AddMember(EquationMember member)

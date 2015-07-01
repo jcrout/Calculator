@@ -53,13 +53,28 @@
     <Compile Include="Controls.cs">
       <SubType>Component</SubType>
     </Compile>
+    <Compile Include="Controls\ConstantBox.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Include="Controls\EquationBox.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="Controls\EquationBoxContainer.cs">
       <SubType>Component</SubType>
     </Compile>
     <Compile Include="Controls\GraphBox.cs">
       <SubType>Component</SubType>
     </Compile>
     <Compile Include="DataTypes.cs" />
+    <Compile Include="EquationMembers\Constant.cs" />
+    <Compile Include="EquationMembers\EquationMember.cs" />
+    <Compile Include="EquationMembers\Function.cs" />
+    <Compile Include="EquationMembers\Operator.cs" />
+    <Compile Include="EquationMembers\SubExpressionDelimiter.cs" />
+    <Compile Include="EquationMembers\Variable.cs" />
+    <Compile Include="EquationParsing\EquationParser.cs" />
+    <Compile Include="EquationParsing\EquationValidationErrorType.cs" />
+    <Compile Include="EquationParsing\EquationValidationException.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">

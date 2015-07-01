@@ -1,4 +1,28 @@
-﻿
+﻿//-----------------------------------------------------------------------
+// To Do:
+//  Graph Box:
+//      Drawing:
+//          -Zoom Factor
+//          -X ranges, Y ranges (default -10 to 10 each)
+//          -Option for full gridlines, tick marks on lines
+//          -Set colors for gridlines/ticks, including alternating colors
+//      -Lines between points
+//          -Set colors for lines, including alternating/set patterns
+//          -Line thickness
+//          -Temporally draw lines?
+//      -Points
+//          -Option to draw circles on points, or other shapes/images
+//          -Cache the points for tracing
+//      -Tracer
+//          -Iterate over cached points
+//          -OnTraceNext, passing the point to trace, allow users to override method?
+//      -Modes
+//          -Degrees/Radians
+//
+// Include a 'Constants' textbox locally for each EBox and one globally (cannot have repeat values for local)
+// CheckBox to enable/disable an EB for graphing
+//-----------------------------------------------------------------------
+
 namespace Calculator
 {
     using System;
